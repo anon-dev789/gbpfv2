@@ -139,10 +139,13 @@ contract OracleAdapter {
         // immediately useful instead of returning a TwapWindowUnreachable error.
         (, int256 answer,, uint256 updatedAt,) = IChainlinkFeed(chainlink_).latestRoundData();
         _lastChainlinkAnswer = answer;
+        // Safety: timestamps fit in uint64 until year ~584 billion AD.
+        // forge-lint: disable-next-line(unsafe-typecast)
         _lastChainlinkUpdatedAt = uint64(updatedAt);
         // The first snapshot has cumulativeWadSeconds = 0 by definition (no time has elapsed
         // since "the beginning of observation"). We record it at the current block timestamp
         // so the TWAP can be computed against it.
+        // forge-lint: disable-next-line(unsafe-typecast)
         _writeSnapshot(uint64(block.timestamp), 0);
     }
 
@@ -171,6 +174,8 @@ contract OracleAdapter {
 
         // 4. Staleness check — use the *Chainlink-reported* updatedAt, not block.timestamp,
         //    so we measure against Chainlink's own clock.
+        //    Validator timestamp drift (a few seconds) is irrelevant against a 26h staleness window.
+        // forge-lint: disable-next-line(block-timestamp)
         bool stale = (block.timestamp > updatedAt) && (block.timestamp - updatedAt > MAX_STALENESS);
 
         // 5. Compose pause state.
@@ -184,6 +189,8 @@ contract OracleAdapter {
 
         twapWad = _twap();
         pausedUntilTs = pausedUntil;
+        // Validator timestamp drift (a few seconds) is irrelevant against a 15-minute cooldown.
+        // forge-lint: disable-next-line(block-timestamp)
         healthy = (pausedUntilTs == 0 || block.timestamp >= pausedUntilTs);
     }
 
@@ -198,17 +205,21 @@ contract OracleAdapter {
             deviation = _wouldTriggerDeviation(_lastChainlinkAnswer, answer);
         }
 
+        // forge-lint: disable-next-line(block-timestamp)
         bool stale = (block.timestamp > updatedAt) && (block.timestamp - updatedAt > MAX_STALENESS);
 
         // Compute a hypothetical pausedUntil under the current observations.
         uint64 effective = pausedUntil;
         if (!sequencerOk || stale || deviation) {
+            // Safety: block.timestamp + COOLDOWN fits in uint64 for ~584 billion years.
+            // forge-lint: disable-next-line(unsafe-typecast)
             uint64 candidate = uint64(block.timestamp + COOLDOWN);
             if (candidate > effective) effective = candidate;
         }
 
         twapWad = _previewTwap(answer, updatedAt);
         pausedUntilTs = effective;
+        // forge-lint: disable-next-line(block-timestamp)
         healthy = (effective == 0 || block.timestamp >= effective);
     }
 
@@ -235,12 +246,15 @@ contract OracleAdapter {
         uint256 prevPriceWad = _toWad(prevAnswer);
         uint256 newCum = uint256(head.cumulativeWadSeconds) + prevPriceWad * dt;
 
+        // Safety: newUpdatedAt comes from Chainlink and represents a unix timestamp.
+        // forge-lint: disable-next-line(unsafe-typecast)
         _writeSnapshot(uint64(newUpdatedAt), newCum);
 
         // Circuit-breaker: relative change between successive Chainlink answers.
         deviationTriggered = _wouldTriggerDeviation(prevAnswer, newAnswer);
 
         _lastChainlinkAnswer = newAnswer;
+        // forge-lint: disable-next-line(unsafe-typecast)
         _lastChainlinkUpdatedAt = uint64(newUpdatedAt);
 
         emit Observed(newAnswer, newUpdatedAt, newCum);
@@ -252,7 +266,12 @@ contract OracleAdapter {
     ///      from a malformed answer.
     function _wouldTriggerDeviation(int256 prev, int256 newer) internal view returns (bool) {
         if (prev <= 0) return false;
+        // Safety: prev > 0 by the check above; cast cannot wrap.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 prevAbs = uint256(prev);
+        // Safety: both branches are non-negative ints; first branch checks newer>=0, second
+        // negates a negative int into a positive int range.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256 newAbs = newer >= 0 ? uint256(newer) : uint256(-newer);
         uint256 diff = newAbs > prevAbs ? newAbs - prevAbs : prevAbs - newAbs;
         // Compare diff/prev to MAX_STEP_WAD. diff and prev have the same units, so we scale
@@ -272,6 +291,7 @@ contract OracleAdapter {
         // Extend "nowCum" up to block.timestamp using the last observed Chainlink price.
         // This is the standard cumulative-sum oracle trick: the integral is well-defined at
         // any moment because the price between Chainlink updates is by convention unchanged.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp > head.timestamp) {
             uint256 dtNow = block.timestamp - head.timestamp;
             nowCum += _toWad(_lastChainlinkAnswer) * dtNow;
@@ -300,9 +320,12 @@ contract OracleAdapter {
         if (previewUpdatedAt > _lastChainlinkUpdatedAt && _lastChainlinkUpdatedAt != 0) {
             uint256 dt = previewUpdatedAt - _lastChainlinkUpdatedAt;
             nowCum += _toWad(_lastChainlinkAnswer) * dt;
+            // Safety: previewUpdatedAt is a Chainlink-reported unix timestamp.
+            // forge-lint: disable-next-line(unsafe-typecast)
             lastSnap = uint64(previewUpdatedAt);
         }
 
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp > lastSnap) {
             uint256 dtNow = block.timestamp - lastSnap;
             uint256 priceForExtension =
@@ -389,14 +412,19 @@ contract OracleAdapter {
         // uint192 (priceWad ~ 1e18, dt up to ~2^64 seconds, product ~ 2^124 < 2^192).
         uint8 nextHead;
         unchecked {
+            // Safety: result mod RING_SIZE (64) always fits in uint8.
+            // forge-lint: disable-next-line(unsafe-typecast)
             nextHead = uint8((uint256(_ringHead) + 1) % RING_SIZE);
         }
         if (_ringCount == 0) {
             // First write goes to index 0; subsequent writes advance the head.
+            // Safety: cum bound derived above; max ~2^124 fits in uint192.
+            // forge-lint: disable-next-line(unsafe-typecast)
             _ring[0] = Snapshot({timestamp: ts, cumulativeWadSeconds: uint192(cum)});
             _ringHead = 0;
             _ringCount = 1;
         } else {
+            // forge-lint: disable-next-line(unsafe-typecast)
             _ring[nextHead] = Snapshot({timestamp: ts, cumulativeWadSeconds: uint192(cum)});
             _ringHead = nextHead;
             if (_ringCount < RING_SIZE) {
@@ -418,6 +446,8 @@ contract OracleAdapter {
         // answer = 0 means up; answer != 0 means down.
         if (answer != 0) return (false, PauseReason.SequencerDown);
         // Within grace window after recovery: also not ok.
+        // Validator timestamp drift (a few seconds) is irrelevant against a 1h grace window.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < startedAt + SEQUENCER_GRACE) {
             return (false, PauseReason.SequencerGrace);
         }
@@ -432,6 +462,8 @@ contract OracleAdapter {
     /// @dev Arm the cooldown: extend pausedUntil if the new candidate is later. Trigger only
     ///      strengthens; we never shorten the cooldown.
     function _arm(PauseReason reason) internal {
+        // Safety: block.timestamp + COOLDOWN fits in uint64 until year ~584 billion AD.
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint64 candidate = uint64(block.timestamp + COOLDOWN);
         if (candidate > pausedUntil) {
             pausedUntil = candidate;
