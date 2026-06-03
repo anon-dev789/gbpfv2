@@ -276,17 +276,120 @@ Defence-in-depth:
 
 ---
 
-## 5. Modules _(future, populated as built)_
+## 5. Module: OracleAdapter
 
-- 5.1 **Oracle adapters** — Chainlink GBP/USD reader, TWAP buffer, sequencer-uptime reader
-- 5.2 **Pause module** — trigger detection, cooldown tracking, hysteresis
-- 5.3 **Hook** — V4 `beforeSwap` integration, return-delta encoding, flash-accounting settlement
-- 5.4 **Deploy script** — atomic seed-and-burn, CREATE2 determinism
-- 5.5 **GBPF token** — ERC-20 with permit, mint/burn restricted to hook
+**Path:** `src/OracleAdapter.sol`
+**Type:** Immutable stateful contract. Owns GBP/USD pricing and operational health for the hook.
+
+### 5.1 Surface
+
+- `update()` — state-changing; pulls latest Chainlink, advances cumulative integral if new, evaluates pause conditions, returns `(twapWad, healthy, pausedUntil)`. Called by hook on every swap.
+- `preview()` — view; same return, no mutation. For off-chain monitors.
+- `latestPriceWad()` — view; most recent Chainlink answer in WAD.
+
+### 5.2 Invariants and behaviours verified
+
+| Property | Verified by |
+|---|---|
+| TWAP at constant price equals that price | `test_twap_constant_price_returns_that_price` |
+| TWAP at single step is time-weighted correctly | `test_twap_step_change_is_time_weighted`, `test_twap_step_change_mid_window_is_blend` |
+| Staleness pause fires at MAX_STALENESS+1 | `test_staleness_pauses_when_chainlink_too_old` |
+| Staleness pause does not fire at MAX_STALENESS-1 | `test_staleness_does_not_pause_within_window` |
+| Deviation circuit-breaker fires on >2% step | `test_deviation_triggers_on_large_step` (both directions) |
+| Deviation circuit-breaker does not fire on <2% step | `test_deviation_does_not_trigger_on_small_step` |
+| Sequencer down triggers pause | `test_sequencer_down_pauses` |
+| Within-grace recovery triggers pause | `test_sequencer_recently_recovered_within_grace_pauses` |
+| Past-grace recovery is OK | `test_sequencer_recovered_past_grace_is_ok` |
+| Pause persists for full cooldown | `test_pause_persists_for_full_cooldown` |
+| Innocuous updates don't shorten the cooldown | `test_new_trigger_extends_cooldown_not_reduces` |
+| After cooldown expires, new trigger re-arms cleanly | `test_new_trigger_after_cooldown_arms_again` |
+| `preview()` matches `update()` when no state change | `test_preview_matches_update_when_nothing_changed` |
+| `preview()` does not mutate state | `test_preview_does_not_mutate_state` |
+
+### 5.3 TWAP design choice
+
+Cumulative-sum accumulator anchored to **Chainlink's update cadence** (not to swap cadence). When Chainlink reports a new observation, we extend the integral by `previousPrice × (newUpdatedAt − previousUpdatedAt)` and store a snapshot. Between Chainlink updates, the price is by convention unchanged, so the TWAP "extension up to now" uses the last Chainlink price.
+
+This means:
+- Swap frequency does not skew the TWAP.
+- TWAP is correct over any window the ring covers (64 snapshots; under 24h Chainlink heartbeat, the ring effectively never wraps).
+- Cumulative storage cost is low: one storage slot per Chainlink update, not per swap.
+
+### 5.4 Circuit-breaker semantics
+
+The 2% deviation check compares **successive Chainlink answers**, not the current Chainlink answer to some moving average. This means:
+- A single 6% flash-crash update fires the circuit-breaker.
+- A gradual 6% move spread across 12× 0.5% updates does NOT fire the circuit-breaker — those updates trickle through and the curve handles the solvency drift.
+
+This is intentional and reflects the committed semantics in `project_gbpf_pause.md`.
+
+### 5.5 What we have NOT done for this module
+
+- **Fork tests against the real Base Chainlink feed and sequencer-uptime feed.** Pending; mock tests verify the math; fork tests verify the integration.
+- **Invariant test harness.** The pure-curve and Vault modules have invariant harnesses; OracleAdapter would benefit from one that exercises chains of `update()` calls with random oracle inputs. Deferred to when we wire it into the Hook.
+- **Slither pass.** Deferred until Hook is in.
 
 ---
 
-## 6. Deployment posture _(future)_
+## 6. Module: GBPF token
+
+**Path:** `src/GBPF.sol`
+**Type:** Immutable Solady ERC20 with EIP-2612 permit. 18 decimals. Name "GBP Float", symbol "GBPF".
+
+### 6.1 Surface
+
+- `mint(to, amount)` — HOOK only. Reverts if `to == address(0)` (explicit guard — Solady's `_mint` permits zero-address mints which would lock tokens forever).
+- `burn(amount)` — HOOK only. Burns from `msg.sender` (= HOOK). The hook is expected to hold the tokens before calling, having received them via Uniswap V4's settlement flow.
+
+Standard ERC20 functions (`transfer`, `transferFrom`, `approve`, `allowance`, `balanceOf`, `totalSupply`, `permit`, `nonces`, `DOMAIN_SEPARATOR`) are inherited from Solady.
+
+### 6.2 Trust model
+
+- HOOK is the sole authority on supply. No owner, no admin, no pausing of the token itself (pause is enforced upstream at the hook layer; a paused hook simply doesn't call mint/burn).
+- No blocklists. No transfer hooks beyond standard ERC20.
+- No `selfdestruct`, no `delegatecall`, no upgrade.
+
+### 6.3 burn-from-self design choice
+
+Earlier draft accepted `burn(from, amount)` allowing the hook to burn from arbitrary addresses. Rejected in favour of `burn(amount)` operating on `msg.sender`'s balance because:
+- V4's swap settlement moves the user's GBPF to the hook as part of the swap itself — no separate approval needed for the user→hook leg.
+- The token contract enforces a balance check at `_burn`; the hook cannot burn what it doesn't hold.
+- Eliminates an attack surface where a buggy hook could be tricked into burning the wrong user's tokens.
+
+### 6.4 Verified properties
+
+| Property | Verified by |
+|---|---|
+| name/symbol/decimals correct | `test_name`, `test_symbol`, `test_decimals` |
+| Initial supply zero | `test_initial_supply_is_zero` |
+| HOOK address immutable | `test_hook_address_immutable` |
+| Only HOOK can mint | `test_mint_by_hook_succeeds`, `test_mint_by_random_address_reverts`, `test_mint_by_alice_reverts` |
+| Mint to zero address reverts | `test_mint_to_zero_address_reverts` |
+| Only HOOK can burn; burns from self | `test_burn_by_hook_from_self_succeeds`, `test_burn_by_random_address_reverts` |
+| Cannot burn more than HOOK balance | `test_burn_more_than_hook_balance_reverts` |
+| Zero burn is no-op | `test_burn_zero_succeeds` |
+| Transfer, transferFrom, allowance behave as standard ERC20 | `test_transfer_works`, `test_transferFrom_with_approval_works`, `test_transfer_exceeds_balance_reverts` |
+| Permit grants allowance with valid sig | `test_permit_grants_allowance` |
+| Permit rejects bad signature | `test_permit_with_bad_signature_reverts` |
+| Permit rejects expired deadline | `test_permit_after_deadline_reverts` |
+| Total supply tracks mint/burn sequences (fuzz) | `testFuzz_supply_tracks_mints_and_burns` (10k runs) |
+
+### 6.5 What we have NOT done for this module
+
+- **Invariant test harness.** Token is simple enough that the unit + fuzz coverage above is comprehensive; an invariant harness would be redundant.
+- **Slither pass.** Deferred until Hook is in.
+
+---
+
+## 7. Modules _(future, populated as built)_
+
+- 7.1 **Hook** — V4 `beforeSwap` integration, return-delta encoding, flash-accounting settlement; composes Curve + Vault + OracleAdapter + GBPF
+- 7.2 **Deploy script** — atomic seed-and-burn, CREATE2 determinism
+- 7.3 **Fork tests** — against real Base infrastructure
+
+---
+
+## 8. Deployment posture _(future)_
 
 To be populated before mainnet deploy:
 
@@ -300,9 +403,11 @@ To be populated before mainnet deploy:
 
 ---
 
-## 7. Changelog
+## 9. Changelog
 
 | Date | Change | Affected modules |
 |---|---|---|
 | 2026-06-03 | Initial doc | SpreadCurve |
 | 2026-06-03 | Added Vault module + invariants. Caught two real bugs via fuzz/invariant testing: (a) yield-share formula divided by lastChi instead of currentChi, (b) `withdraw` allowed `feeAmount` to push `pendingBeneficiarySUsds` above vault balance. Both fixed before any code shipped. | Vault |
+| 2026-06-03 | Added OracleAdapter module. Cumulative-sum TWAP anchored to Chainlink update cadence; all five committed pause triggers (staleness, deviation, sequencer-down, sequencer-grace, hysteresis) verified by unit tests. Lint-clean after annotating intentional block.timestamp / cast sites. | OracleAdapter |
+| 2026-06-03 | Added GBPF token. Solady ERC20 + permit, hook-only mint/burn, burn-from-self design to avoid arbitrary-from attack surface. | GBPF |
