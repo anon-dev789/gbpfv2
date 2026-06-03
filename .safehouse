@@ -1,0 +1,8 @@
+# agent-safehouse config for this project.
+# Grants Claude Code read+exec access to tools that live outside the project tree
+# but are needed for security tooling (Slither, etc.). All entries are read-only.
+#
+# To activate, set SAFEHOUSE_TRUST_WORKDIR_CONFIG=1 in your shell, or pass
+# --trust-workdir-config to safehouse, or alias claude accordingly.
+
+add-dirs-ro=/Users/charliep/.local/bin:/Users/charliep/.local/share/uv

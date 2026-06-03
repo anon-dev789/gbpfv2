@@ -1,0 +1,896 @@
+{
+  "version": 1,
+  "S_MAX_wad": "50000000000000000",
+  "D_50_wad": "50000000000000000",
+  "count": 222,
+  "vectors": [
+    {
+      "solvency_wad": "10000000000000000",
+      "expected_spread_wad": "50000000000000000"
+    },
+    {
+      "solvency_wad": "100000000000000000",
+      "expected_spread_wad": "50000000000000000"
+    },
+    {
+      "solvency_wad": "200000000000000000",
+      "expected_spread_wad": "50000000000000000"
+    },
+    {
+      "solvency_wad": "300000000000000000",
+      "expected_spread_wad": "50000000000000000"
+    },
+    {
+      "solvency_wad": "400000000000000000",
+      "expected_spread_wad": "50000000000000000"
+    },
+    {
+      "solvency_wad": "500000000000000000",
+      "expected_spread_wad": "50000000000000000"
+    },
+    {
+      "solvency_wad": "600000000000000000",
+      "expected_spread_wad": "50000000000000000"
+    },
+    {
+      "solvency_wad": "700000000000000000",
+      "expected_spread_wad": "50000000000000000"
+    },
+    {
+      "solvency_wad": "800000000000000000",
+      "expected_spread_wad": "49999999999998736"
+    },
+    {
+      "solvency_wad": "850000000000000000",
+      "expected_spread_wad": "49999998477002056"
+    },
+    {
+      "solvency_wad": "900000000000000000",
+      "expected_spread_wad": "49966464986953352"
+    },
+    {
+      "solvency_wad": "901000000000000000",
+      "expected_spread_wad": "49960680043534944"
+    },
+    {
+      "solvency_wad": "902000000000000000",
+      "expected_spread_wad": "49953971301977128"
+    },
+    {
+      "solvency_wad": "903000000000000000",
+      "expected_spread_wad": "49946204632014288"
+    },
+    {
+      "solvency_wad": "904000000000000000",
+      "expected_spread_wad": "49937228725580152"
+    },
+    {
+      "solvency_wad": "905000000000000000",
+      "expected_spread_wad": "49926873272428080"
+    },
+    {
+      "solvency_wad": "906000000000000000",
+      "expected_spread_wad": "49914947001574184"
+    },
+    {
+      "solvency_wad": "907000000000000000",
+      "expected_spread_wad": "49901235588456608"
+    },
+    {
+      "solvency_wad": "908000000000000000",
+      "expected_spread_wad": "49885499429759536"
+    },
+    {
+      "solvency_wad": "909000000000000000",
+      "expected_spread_wad": "49867471290304336"
+    },
+    {
+      "solvency_wad": "910000000000000000",
+      "expected_spread_wad": "49846853829299672"
+    },
+    {
+      "solvency_wad": "911000000000000000",
+      "expected_spread_wad": "49823317016605240"
+    },
+    {
+      "solvency_wad": "912000000000000000",
+      "expected_spread_wad": "49796495453534488"
+    },
+    {
+      "solvency_wad": "913000000000000000",
+      "expected_spread_wad": "49765985617129888"
+    },
+    {
+      "solvency_wad": "914000000000000000",
+      "expected_spread_wad": "49731343051812760"
+    },
+    {
+      "solvency_wad": "915000000000000000",
+      "expected_spread_wad": "49692079537852272"
+    },
+    {
+      "solvency_wad": "916000000000000000",
+      "expected_spread_wad": "49647660272214136"
+    },
+    {
+      "solvency_wad": "917000000000000000",
+      "expected_spread_wad": "49597501104022864"
+    },
+    {
+      "solvency_wad": "918000000000000000",
+      "expected_spread_wad": "49540965874063840"
+    },
+    {
+      "solvency_wad": "919000000000000000",
+      "expected_spread_wad": "49477363915397872"
+    },
+    {
+      "solvency_wad": "920000000000000000",
+      "expected_spread_wad": "49405947780165968"
+    },
+    {
+      "solvency_wad": "921000000000000000",
+      "expected_spread_wad": "49325911265890624"
+    },
+    {
+      "solvency_wad": "922000000000000000",
+      "expected_spread_wad": "49236387822855848"
+    },
+    {
+      "solvency_wad": "923000000000000000",
+      "expected_spread_wad": "49136449432243200"
+    },
+    {
+      "solvency_wad": "924000000000000000",
+      "expected_spread_wad": "49025106052336288"
+    },
+    {
+      "solvency_wad": "925000000000000000",
+      "expected_spread_wad": "48901305736940680"
+    },
+    {
+      "solvency_wad": "926000000000000000",
+      "expected_spread_wad": "48763935535802872"
+    },
+    {
+      "solvency_wad": "927000000000000000",
+      "expected_spread_wad": "48611823290791368"
+    },
+    {
+      "solvency_wad": "928000000000000000",
+      "expected_spread_wad": "48443740443412312"
+    },
+    {
+      "solvency_wad": "929000000000000000",
+      "expected_spread_wad": "48258405968312296"
+    },
+    {
+      "solvency_wad": "930000000000000000",
+      "expected_spread_wad": "48054491543180712"
+    },
+    {
+      "solvency_wad": "931000000000000000",
+      "expected_spread_wad": "47830628057299536"
+    },
+    {
+      "solvency_wad": "932000000000000000",
+      "expected_spread_wad": "47585413548319440"
+    },
+    {
+      "solvency_wad": "933000000000000000",
+      "expected_spread_wad": "47317422639127896"
+    },
+    {
+      "solvency_wad": "934000000000000000",
+      "expected_spread_wad": "47025217523490200"
+    },
+    {
+      "solvency_wad": "935000000000000000",
+      "expected_spread_wad": "46707360520186352"
+    },
+    {
+      "solvency_wad": "936000000000000000",
+      "expected_spread_wad": "46362428180554432"
+    },
+    {
+      "solvency_wad": "937000000000000000",
+      "expected_spread_wad": "45989026893834912"
+    },
+    {
+      "solvency_wad": "938000000000000000",
+      "expected_spread_wad": "45585809888978088"
+    },
+    {
+      "solvency_wad": "939000000000000000",
+      "expected_spread_wad": "45151495481440152"
+    },
+    {
+      "solvency_wad": "940000000000000000",
+      "expected_spread_wad": "44684886360193656"
+    },
+    {
+      "solvency_wad": "941000000000000000",
+      "expected_spread_wad": "44184889655321192"
+    },
+    {
+      "solvency_wad": "942000000000000000",
+      "expected_spread_wad": "43650537472192824"
+    },
+    {
+      "solvency_wad": "943000000000000000",
+      "expected_spread_wad": "43081007526704960"
+    },
+    {
+      "solvency_wad": "944000000000000000",
+      "expected_spread_wad": "42475643470054632"
+    },
+    {
+      "solvency_wad": "945000000000000000",
+      "expected_spread_wad": "41833974453840576"
+    },
+    {
+      "solvency_wad": "946000000000000000",
+      "expected_spread_wad": "41155733459757056"
+    },
+    {
+      "solvency_wad": "947000000000000000",
+      "expected_spread_wad": "40440873905430608"
+    },
+    {
+      "solvency_wad": "948000000000000000",
+      "expected_spread_wad": "39689584041331192"
+    },
+    {
+      "solvency_wad": "949000000000000000",
+      "expected_spread_wad": "38902298674877552"
+    },
+    {
+      "solvency_wad": "950000000000000000",
+      "expected_spread_wad": "38079707797788280"
+    },
+    {
+      "solvency_wad": "951000000000000000",
+      "expected_spread_wad": "37222761751411888"
+    },
+    {
+      "solvency_wad": "952000000000000000",
+      "expected_spread_wad": "36332672641164808"
+    },
+    {
+      "solvency_wad": "953000000000000000",
+      "expected_spread_wad": "35410911803193980"
+    },
+    {
+      "solvency_wad": "954000000000000000",
+      "expected_spread_wad": "34459203230801012"
+    },
+    {
+      "solvency_wad": "955000000000000000",
+      "expected_spread_wad": "33479512980938576"
+    },
+    {
+      "solvency_wad": "956000000000000000",
+      "expected_spread_wad": "32474034697438252"
+    },
+    {
+      "solvency_wad": "957000000000000000",
+      "expected_spread_wad": "31445171502346644"
+    },
+    {
+      "solvency_wad": "958000000000000000",
+      "expected_spread_wad": "30395514614536736"
+    },
+    {
+      "solvency_wad": "959000000000000000",
+      "expected_spread_wad": "29327819150584068"
+    },
+    {
+      "solvency_wad": "960000000000000000",
+      "expected_spread_wad": "28244977642311288"
+    },
+    {
+      "solvency_wad": "961000000000000000",
+      "expected_spread_wad": "27149991864866620"
+    },
+    {
+      "solvency_wad": "962000000000000000",
+      "expected_spread_wad": "26045943606296276"
+    },
+    {
+      "solvency_wad": "963000000000000000",
+      "expected_spread_wad": "24935965023150244"
+    },
+    {
+      "solvency_wad": "964000000000000000",
+      "expected_spread_wad": "23823209216886052"
+    },
+    {
+      "solvency_wad": "965000000000000000",
+      "expected_spread_wad": "22710821634112988"
+    },
+    {
+      "solvency_wad": "966000000000000000",
+      "expected_spread_wad": "21601912842551524"
+    },
+    {
+      "solvency_wad": "967000000000000000",
+      "expected_spread_wad": "20499533167341152"
+    },
+    {
+      "solvency_wad": "968000000000000000",
+      "expected_spread_wad": "19406649592981476"
+    },
+    {
+      "solvency_wad": "969000000000000000",
+      "expected_spread_wad": "18326125249008588"
+    },
+    {
+      "solvency_wad": "970000000000000000",
+      "expected_spread_wad": "17260701706776072"
+    },
+    {
+      "solvency_wad": "971000000000000000",
+      "expected_spread_wad": "16212984224469374"
+    },
+    {
+      "solvency_wad": "972000000000000000",
+      "expected_spread_wad": "15185429991318850"
+    },
+    {
+      "solvency_wad": "973000000000000000",
+      "expected_spread_wad": "14180339342862964"
+    },
+    {
+      "solvency_wad": "974000000000000000",
+      "expected_spread_wad": "13199849849319844"
+    },
+    {
+      "solvency_wad": "975000000000000000",
+      "expected_spread_wad": "12245933120185474"
+    },
+    {
+      "solvency_wad": "976000000000000000",
+      "expected_spread_wad": "11320394120909366"
+    },
+    {
+      "solvency_wad": "977000000000000000",
+      "expected_spread_wad": "10424872762070784"
+    },
+    {
+      "solvency_wad": "978000000000000000",
+      "expected_spread_wad": "9560847497501064"
+    },
+    {
+      "solvency_wad": "979000000000000000",
+      "expected_spread_wad": "8729640654435699"
+    },
+    {
+      "solvency_wad": "980000000000000000",
+      "expected_spread_wad": "7932425214874958"
+    },
+    {
+      "solvency_wad": "981000000000000000",
+      "expected_spread_wad": "7170232771515659"
+    },
+    {
+      "solvency_wad": "982000000000000000",
+      "expected_spread_wad": "6443962392418673"
+    },
+    {
+      "solvency_wad": "983000000000000000",
+      "expected_spread_wad": "5754390144514649"
+    },
+    {
+      "solvency_wad": "984000000000000000",
+      "expected_spread_wad": "5102179045702718"
+    },
+    {
+      "solvency_wad": "985000000000000000",
+      "expected_spread_wad": "4487889237358012"
+    },
+    {
+      "solvency_wad": "986000000000000000",
+      "expected_spread_wad": "3911988192379448"
+    },
+    {
+      "solvency_wad": "987000000000000000",
+      "expected_spread_wad": "3374860797497772"
+    },
+    {
+      "solvency_wad": "988000000000000000",
+      "expected_spread_wad": "2876819171623385"
+    },
+    {
+      "solvency_wad": "989000000000000000",
+      "expected_spread_wad": "2418112103917544"
+    },
+    {
+      "solvency_wad": "990000000000000000",
+      "expected_spread_wad": "1998934015558182"
+    },
+    {
+      "solvency_wad": "991000000000000000",
+      "expected_spread_wad": "1619433367530054"
+    },
+    {
+      "solvency_wad": "992000000000000000",
+      "expected_spread_wad": "1279720453014672"
+    },
+    {
+      "solvency_wad": "993000000000000000",
+      "expected_spread_wad": "979874527013981"
+    },
+    {
+      "solvency_wad": "994000000000000000",
+      "expected_spread_wad": "719950237727479"
+    },
+    {
+      "solvency_wad": "995000000000000000",
+      "expected_spread_wad": "499983333999974"
+    },
+    {
+      "solvency_wad": "996000000000000000",
+      "expected_spread_wad": "319995631004916"
+    },
+    {
+      "solvency_wad": "997000000000000000",
+      "expected_spread_wad": "179999222404031"
+    },
+    {
+      "solvency_wad": "998000000000000000",
+      "expected_spread_wad": "79999931733403"
+    },
+    {
+      "solvency_wad": "999000000000000000",
+      "expected_spread_wad": "19999998933333"
+    },
+    {
+      "solvency_wad": "999999999000000000",
+      "expected_spread_wad": "20"
+    },
+    {
+      "solvency_wad": "999999999999000064",
+      "expected_spread_wad": "0"
+    },
+    {
+      "solvency_wad": "1000000000000000000",
+      "expected_spread_wad": "0"
+    },
+    {
+      "solvency_wad": "1000000000001000064",
+      "expected_spread_wad": "0"
+    },
+    {
+      "solvency_wad": "1000000001000000128",
+      "expected_spread_wad": "-20"
+    },
+    {
+      "solvency_wad": "1000999999999999872",
+      "expected_spread_wad": "-19999998933329"
+    },
+    {
+      "solvency_wad": "1002000000000000000",
+      "expected_spread_wad": "-79999931733403"
+    },
+    {
+      "solvency_wad": "1002999999999999872",
+      "expected_spread_wad": "-179999222404018"
+    },
+    {
+      "solvency_wad": "1004000000000000000",
+      "expected_spread_wad": "-319995631004916"
+    },
+    {
+      "solvency_wad": "1004999999999999872",
+      "expected_spread_wad": "-499983333999952"
+    },
+    {
+      "solvency_wad": "1006000000000000000",
+      "expected_spread_wad": "-719950237727479"
+    },
+    {
+      "solvency_wad": "1006999999999999872",
+      "expected_spread_wad": "-979874527013950"
+    },
+    {
+      "solvency_wad": "1008000000000000000",
+      "expected_spread_wad": "-1279720453014672"
+    },
+    {
+      "solvency_wad": "1008999999999999872",
+      "expected_spread_wad": "-1619433367530014"
+    },
+    {
+      "solvency_wad": "1010000000000000000",
+      "expected_spread_wad": "-1998934015558182"
+    },
+    {
+      "solvency_wad": "1010999999999999872",
+      "expected_spread_wad": "-2418112103917496"
+    },
+    {
+      "solvency_wad": "1012000000000000000",
+      "expected_spread_wad": "-2876819171623385"
+    },
+    {
+      "solvency_wad": "1012999999999999872",
+      "expected_spread_wad": "-3374860797497714"
+    },
+    {
+      "solvency_wad": "1014000000000000000",
+      "expected_spread_wad": "-3911988192379448"
+    },
+    {
+      "solvency_wad": "1014999999999999872",
+      "expected_spread_wad": "-4487889237357947"
+    },
+    {
+      "solvency_wad": "1016000000000000000",
+      "expected_spread_wad": "-5102179045702718"
+    },
+    {
+      "solvency_wad": "1016999999999999872",
+      "expected_spread_wad": "-5754390144514575"
+    },
+    {
+      "solvency_wad": "1018000000000000000",
+      "expected_spread_wad": "-6443962392418673"
+    },
+    {
+      "solvency_wad": "1018999999999999872",
+      "expected_spread_wad": "-7170232771515576"
+    },
+    {
+      "solvency_wad": "1020000000000000000",
+      "expected_spread_wad": "-7932425214874958"
+    },
+    {
+      "solvency_wad": "1020999999999999872",
+      "expected_spread_wad": "-8729640654435608"
+    },
+    {
+      "solvency_wad": "1022000000000000000",
+      "expected_spread_wad": "-9560847497501064"
+    },
+    {
+      "solvency_wad": "1022999999999999872",
+      "expected_spread_wad": "-10424872762070686"
+    },
+    {
+      "solvency_wad": "1024000000000000000",
+      "expected_spread_wad": "-11320394120909366"
+    },
+    {
+      "solvency_wad": "1024999999999999872",
+      "expected_spread_wad": "-12245933120185370"
+    },
+    {
+      "solvency_wad": "1026000000000000000",
+      "expected_spread_wad": "-13199849849319844"
+    },
+    {
+      "solvency_wad": "1026999999999999872",
+      "expected_spread_wad": "-14180339342862850"
+    },
+    {
+      "solvency_wad": "1028000000000000000",
+      "expected_spread_wad": "-15185429991318850"
+    },
+    {
+      "solvency_wad": "1028999999999999872",
+      "expected_spread_wad": "-16212984224469258"
+    },
+    {
+      "solvency_wad": "1030000000000000000",
+      "expected_spread_wad": "-17260701706776072"
+    },
+    {
+      "solvency_wad": "1030999999999999872",
+      "expected_spread_wad": "-18326125249008472"
+    },
+    {
+      "solvency_wad": "1032000000000000000",
+      "expected_spread_wad": "-19406649592981476"
+    },
+    {
+      "solvency_wad": "1032999999999999872",
+      "expected_spread_wad": "-20499533167341032"
+    },
+    {
+      "solvency_wad": "1034000000000000000",
+      "expected_spread_wad": "-21601912842551524"
+    },
+    {
+      "solvency_wad": "1034999999999999872",
+      "expected_spread_wad": "-22710821634112864"
+    },
+    {
+      "solvency_wad": "1036000000000000000",
+      "expected_spread_wad": "-23823209216886052"
+    },
+    {
+      "solvency_wad": "1036999999999999872",
+      "expected_spread_wad": "-24935965023150120"
+    },
+    {
+      "solvency_wad": "1038000000000000000",
+      "expected_spread_wad": "-26045943606296276"
+    },
+    {
+      "solvency_wad": "1038999999999999872",
+      "expected_spread_wad": "-27149991864866496"
+    },
+    {
+      "solvency_wad": "1040000000000000000",
+      "expected_spread_wad": "-28244977642311288"
+    },
+    {
+      "solvency_wad": "1040999999999999872",
+      "expected_spread_wad": "-29327819150583948"
+    },
+    {
+      "solvency_wad": "1042000000000000000",
+      "expected_spread_wad": "-30395514614536736"
+    },
+    {
+      "solvency_wad": "1042999999999999872",
+      "expected_spread_wad": "-31445171502346528"
+    },
+    {
+      "solvency_wad": "1044000000000000000",
+      "expected_spread_wad": "-32474034697438252"
+    },
+    {
+      "solvency_wad": "1044999999999999872",
+      "expected_spread_wad": "-33479512980938464"
+    },
+    {
+      "solvency_wad": "1046000000000000000",
+      "expected_spread_wad": "-34459203230801012"
+    },
+    {
+      "solvency_wad": "1046999999999999872",
+      "expected_spread_wad": "-35410911803193876"
+    },
+    {
+      "solvency_wad": "1048000000000000000",
+      "expected_spread_wad": "-36332672641164808"
+    },
+    {
+      "solvency_wad": "1048999999999999872",
+      "expected_spread_wad": "-37222761751411800"
+    },
+    {
+      "solvency_wad": "1050000000000000000",
+      "expected_spread_wad": "-38079707797788280"
+    },
+    {
+      "solvency_wad": "1050999999999999872",
+      "expected_spread_wad": "-38902298674877464"
+    },
+    {
+      "solvency_wad": "1052000000000000000",
+      "expected_spread_wad": "-39689584041331192"
+    },
+    {
+      "solvency_wad": "1053000000000000000",
+      "expected_spread_wad": "-40440873905430528"
+    },
+    {
+      "solvency_wad": "1054000000000000000",
+      "expected_spread_wad": "-41155733459757056"
+    },
+    {
+      "solvency_wad": "1055000000000000000",
+      "expected_spread_wad": "-41833974453840488"
+    },
+    {
+      "solvency_wad": "1056000000000000000",
+      "expected_spread_wad": "-42475643470054632"
+    },
+    {
+      "solvency_wad": "1057000000000000000",
+      "expected_spread_wad": "-43081007526704896"
+    },
+    {
+      "solvency_wad": "1058000000000000000",
+      "expected_spread_wad": "-43650537472192824"
+    },
+    {
+      "solvency_wad": "1059000000000000000",
+      "expected_spread_wad": "-44184889655321136"
+    },
+    {
+      "solvency_wad": "1060000000000000000",
+      "expected_spread_wad": "-44684886360193656"
+    },
+    {
+      "solvency_wad": "1061000000000000000",
+      "expected_spread_wad": "-45151495481440152"
+    },
+    {
+      "solvency_wad": "1062000000000000000",
+      "expected_spread_wad": "-45585809888978088"
+    },
+    {
+      "solvency_wad": "1063000000000000000",
+      "expected_spread_wad": "-45989026893834912"
+    },
+    {
+      "solvency_wad": "1064000000000000000",
+      "expected_spread_wad": "-46362428180554432"
+    },
+    {
+      "solvency_wad": "1065000000000000000",
+      "expected_spread_wad": "-46707360520186352"
+    },
+    {
+      "solvency_wad": "1066000000000000000",
+      "expected_spread_wad": "-47025217523490200"
+    },
+    {
+      "solvency_wad": "1067000000000000000",
+      "expected_spread_wad": "-47317422639127896"
+    },
+    {
+      "solvency_wad": "1068000000000000000",
+      "expected_spread_wad": "-47585413548319440"
+    },
+    {
+      "solvency_wad": "1069000000000000000",
+      "expected_spread_wad": "-47830628057299536"
+    },
+    {
+      "solvency_wad": "1070000000000000000",
+      "expected_spread_wad": "-48054491543180712"
+    },
+    {
+      "solvency_wad": "1071000000000000000",
+      "expected_spread_wad": "-48258405968312296"
+    },
+    {
+      "solvency_wad": "1072000000000000000",
+      "expected_spread_wad": "-48443740443412312"
+    },
+    {
+      "solvency_wad": "1073000000000000000",
+      "expected_spread_wad": "-48611823290791368"
+    },
+    {
+      "solvency_wad": "1074000000000000128",
+      "expected_spread_wad": "-48763935535802888"
+    },
+    {
+      "solvency_wad": "1075000000000000000",
+      "expected_spread_wad": "-48901305736940680"
+    },
+    {
+      "solvency_wad": "1076000000000000128",
+      "expected_spread_wad": "-49025106052336304"
+    },
+    {
+      "solvency_wad": "1077000000000000000",
+      "expected_spread_wad": "-49136449432243200"
+    },
+    {
+      "solvency_wad": "1078000000000000128",
+      "expected_spread_wad": "-49236387822855856"
+    },
+    {
+      "solvency_wad": "1079000000000000000",
+      "expected_spread_wad": "-49325911265890624"
+    },
+    {
+      "solvency_wad": "1080000000000000128",
+      "expected_spread_wad": "-49405947780165968"
+    },
+    {
+      "solvency_wad": "1081000000000000000",
+      "expected_spread_wad": "-49477363915397872"
+    },
+    {
+      "solvency_wad": "1082000000000000128",
+      "expected_spread_wad": "-49540965874063840"
+    },
+    {
+      "solvency_wad": "1083000000000000000",
+      "expected_spread_wad": "-49597501104022864"
+    },
+    {
+      "solvency_wad": "1084000000000000128",
+      "expected_spread_wad": "-49647660272214144"
+    },
+    {
+      "solvency_wad": "1085000000000000000",
+      "expected_spread_wad": "-49692079537852272"
+    },
+    {
+      "solvency_wad": "1086000000000000128",
+      "expected_spread_wad": "-49731343051812760"
+    },
+    {
+      "solvency_wad": "1087000000000000000",
+      "expected_spread_wad": "-49765985617129888"
+    },
+    {
+      "solvency_wad": "1088000000000000128",
+      "expected_spread_wad": "-49796495453534496"
+    },
+    {
+      "solvency_wad": "1089000000000000000",
+      "expected_spread_wad": "-49823317016605240"
+    },
+    {
+      "solvency_wad": "1090000000000000128",
+      "expected_spread_wad": "-49846853829299680"
+    },
+    {
+      "solvency_wad": "1091000000000000000",
+      "expected_spread_wad": "-49867471290304336"
+    },
+    {
+      "solvency_wad": "1092000000000000128",
+      "expected_spread_wad": "-49885499429759536"
+    },
+    {
+      "solvency_wad": "1093000000000000000",
+      "expected_spread_wad": "-49901235588456608"
+    },
+    {
+      "solvency_wad": "1094000000000000128",
+      "expected_spread_wad": "-49914947001574184"
+    },
+    {
+      "solvency_wad": "1095000000000000000",
+      "expected_spread_wad": "-49926873272428080"
+    },
+    {
+      "solvency_wad": "1096000000000000128",
+      "expected_spread_wad": "-49937228725580152"
+    },
+    {
+      "solvency_wad": "1097000000000000000",
+      "expected_spread_wad": "-49946204632014288"
+    },
+    {
+      "solvency_wad": "1098000000000000128",
+      "expected_spread_wad": "-49953971301977136"
+    },
+    {
+      "solvency_wad": "1099000000000000000",
+      "expected_spread_wad": "-49960680043534944"
+    },
+    {
+      "solvency_wad": "1100000000000000128",
+      "expected_spread_wad": "-49966464986953352"
+    },
+    {
+      "solvency_wad": "1149999999999999872",
+      "expected_spread_wad": "-49999998477002056"
+    },
+    {
+      "solvency_wad": "1200000000000000000",
+      "expected_spread_wad": "-49999999999998736"
+    },
+    {
+      "solvency_wad": "1500000000000000000",
+      "expected_spread_wad": "-50000000000000000"
+    },
+    {
+      "solvency_wad": "2000000000000000000",
+      "expected_spread_wad": "-50000000000000000"
+    },
+    {
+      "solvency_wad": "3000000000000000000",
+      "expected_spread_wad": "-50000000000000000"
+    },
+    {
+      "solvency_wad": "5000000000000000000",
+      "expected_spread_wad": "-50000000000000000"
+    },
+    {
+      "solvency_wad": "10000000000000000000",
+      "expected_spread_wad": "-50000000000000000"
+    }
+  ]
+}
