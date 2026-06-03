@@ -203,18 +203,90 @@ each of these techniques, and the curve will be re-verified as part of the full-
 
 ---
 
-## 4. Modules _(future, populated as built)_
+## 4. Module: Vault
 
-- 4.1 **Vault** — sUSDS custody, `pendingBeneficiarySUsds` accounting, mint/burn surface, withdrawal flow
-- 4.2 **Oracle adapters** — Chainlink GBP/USD reader, TWAP buffer, SSRAuthOracle reader, sequencer-uptime reader
-- 4.3 **Pause module** — trigger detection, cooldown tracking, hysteresis
-- 4.4 **Hook** — V4 `beforeSwap` integration, return-delta encoding, flash-accounting settlement
-- 4.5 **Deploy script** — atomic seed-and-burn, CREATE2 determinism
-- 4.6 **GBPF token** — ERC-20 with permit, mint/burn restricted to hook
+**Path:** `src/Vault.sol`
+**Type:** Immutable stateful contract. Custody of sUSDS, beneficiary-share accounting. No owner, no admin, no upgrade path.
+
+### 4.1 Surface
+
+External / hook-only:
+- `deposit(uint256 sUsdsAmount, uint256 feeAmount)` — HOOK only. Records an incoming mint deposit.
+- `withdraw(uint256 sUsdsAmount, address to, uint256 feeAmount)` — HOOK only. Pays sUSDS to a redeemer.
+
+External / permissionless:
+- `settle()` — advance yield-share index without transferring.
+- `withdrawBeneficiary()` — settle then forward `pendingBeneficiarySUsds` to the hardcoded BENEFICIARY.
+
+Views:
+- `solvencyInputs()` — non-view; settles then returns `(balance, pending, ssrRate)`.
+- `previewSolvencyInputs()` — view; same data including unsettled yield.
+- `backingBalance()` — view; principal currently backing GBPF, including unsettled yield.
+
+### 4.2 Invariants
+
+Verified by `test/Vault.t.sol` (27 unit + fuzz tests) and `test/invariants/VaultInvariants.t.sol` (3 invariants × 8192 random call sequences):
+
+| Invariant | Verified by |
+|---|---|
+| `pendingBeneficiarySUsds <= SUSDS.balanceOf(this)` | `testFuzz_pending_never_exceeds_balance` (10k), `invariant_pending_never_exceeds_balance` |
+| `lastSettledChi` is monotonically non-decreasing | `testFuzz_lastSettledChi_monotonic` (10k), `invariant_lastSettledChi_never_exceeds_oracle` |
+| `deposit` / `withdraw` revert if caller != HOOK | `test_deposit_revertsIfNotHook`, `test_withdraw_revertsIfNotHook` |
+| `withdraw` reverts if `sUsdsAmount + feeAmount > principalSUsds` | `test_withdraw_blocked_when_exceeds_backing` |
+| `deposit` reverts if `feeAmount > sUsdsAmount` | `test_deposit_feeExceedsAmount_reverts` |
+| `withdrawBeneficiary` always sends to the hardcoded `BENEFICIARY` | `test_withdrawBeneficiary_is_permissionless` |
+| Conservation: `ghostMintInflow == vaultBalance + ghostRedeemOutflow + ghostBeneficiaryWithdrawn` | `invariant_conservation_of_sUsds_shares` |
+
+### 4.3 Yield-share accounting
+
+The beneficiary multisig receives:
+- 100% of `feeAmount` passed by the hook on `deposit` / `withdraw`.
+- 50% of yield accruing on `principalSUsds` between settlements.
+
+Yield credit derivation (full reasoning inline in `_settleBeneficiaryYield`):
+
+```
+credit = principal * chiDelta * NUM / (currentChi * DENOM)
+```
+
+with `NUM=1`, `DENOM=2`. Two correctness-critical details:
+
+1. **Divide by `currentChi`, not `lastChi`.** The credit is the *current* sUSDS share value of the beneficiary's USDS claim; using `lastChi` would over-state it by the proportional growth.
+2. **Use `principalSUsds`, not the live vault balance.** Newly-arrived deposits MUST NOT retroactively earn yield they did not accrue. This was caught by invariant fuzzing — the initial "balance - pending" formulation over-credited under same-block deposit-then-settle sequences.
+
+### 4.4 Rounding
+
+`credit` is integer-divided by `currentChi * DENOM`, rounding **down**. The truncated remainder stays in the vault as principal, which compounds for future settlements. This is the protocol-safe direction: the beneficiary receives slightly less than the mathematically exact share, with the residue benefiting GBPF holders via solvency.
+
+### 4.5 Trust model for `deposit` / `withdraw`
+
+The HOOK is trusted to:
+- Transfer `sUsdsAmount` of sUSDS into the vault before calling `deposit()`.
+- Pass `feeAmount` values consistent with its own pricing math.
+
+Defence-in-depth:
+- `deposit()` verifies `feeAmount <= sUsdsAmount` even though the hook is the only authorised caller — turns a buggy hook into a revert rather than a silent over-credit.
+- `withdraw()` verifies `sUsdsAmount + feeAmount <= principalSUsds` — caught a real bug during invariant fuzzing where the previous check (`sUsdsAmount <= backing`) allowed `feeAmount` to push `pendingBeneficiarySUsds` above the vault balance.
+
+### 4.6 What we have NOT done for this module
+
+- **Fork tests against the real SSRAuthOracle on Base.** Pending; mock-based tests confirm the math; fork tests confirm the integration.
+- **Formal verification of the conservation invariant** (a Halmos/Certora pass).
+- **Slither pass.** Deferred until Hook is in.
 
 ---
 
-## 5. Deployment posture _(future)_
+## 5. Modules _(future, populated as built)_
+
+- 5.1 **Oracle adapters** — Chainlink GBP/USD reader, TWAP buffer, sequencer-uptime reader
+- 5.2 **Pause module** — trigger detection, cooldown tracking, hysteresis
+- 5.3 **Hook** — V4 `beforeSwap` integration, return-delta encoding, flash-accounting settlement
+- 5.4 **Deploy script** — atomic seed-and-burn, CREATE2 determinism
+- 5.5 **GBPF token** — ERC-20 with permit, mint/burn restricted to hook
+
+---
+
+## 6. Deployment posture _(future)_
 
 To be populated before mainnet deploy:
 
@@ -228,8 +300,9 @@ To be populated before mainnet deploy:
 
 ---
 
-## 6. Changelog
+## 7. Changelog
 
 | Date | Change | Affected modules |
 |---|---|---|
 | 2026-06-03 | Initial doc | SpreadCurve |
+| 2026-06-03 | Added Vault module + invariants. Caught two real bugs via fuzz/invariant testing: (a) yield-share formula divided by lastChi instead of currentChi, (b) `withdraw` allowed `feeAmount` to push `pendingBeneficiarySUsds` above vault balance. Both fixed before any code shipped. | Vault |
