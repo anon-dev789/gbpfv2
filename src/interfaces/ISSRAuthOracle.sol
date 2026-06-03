@@ -14,17 +14,23 @@ pragma solidity 0.8.26;
 ///         ssr × (block.timestamp - rho), so accrual is continuous on Base between
 ///         the (rare) bridge messages from mainnet.
 interface ISSRAuthOracle {
-    /// @notice Returns the current USDS-per-sUSDS conversion rate, in ray (27 decimals).
-    /// @dev Extrapolates chi forward using the compounded SSR since last update.
+    /// @notice Returns the current USDS-per-sUSDS conversion rate, in ray (27 decimals),
+    ///         extrapolated forward to `block.timestamp` using the compounded SSR since the
+    ///         last bridge update.
+    /// @dev THIS is what callers should use to price sUSDS in USDS or to track yield over time —
+    ///      it changes every block. `getChi()` is the underlying *stored* value (stale between
+    ///      bridge updates) and should NOT be used for yield accounting.
     function getConversionRate() external view returns (uint256);
 
-    /// @notice Returns the extrapolated cumulative index (chi) at the current block, in ray.
-    /// @dev Equivalent to getConversionRate() — alias for callers thinking in chi-index terms.
-    ///      Used by the Vault to drive its beneficiary-yield share accounting; chi is the
-    ///      natural quantity because yield is proportional to (newChi - oldChi) / oldChi.
+    /// @notice Returns the raw stored chi at the most recent bridge update, in ray.
+    /// @dev DOES NOT extrapolate — this value only changes when the bridge pushes an update.
+    ///      Combined with getSSR() and getRho() it lets callers reconstruct the conversion rate
+    ///      manually, but most code should use getConversionRate() directly.
     function getChi() external view returns (uint256);
 
-    /// @notice Returns the per-second savings rate currently in effect, in ray.
+    /// @notice Returns the per-second savings rate currently in effect, in ray. Stored as
+    ///         `(1 + per_second_rate)` in ray, so the neutral value is 1e27, not 0.
+    /// @dev At 5% APY, getSSR() returns approximately 1.0000000015e27 ray.
     function getSSR() external view returns (uint256);
 
     /// @notice Returns the timestamp of the last bridge-driven update.

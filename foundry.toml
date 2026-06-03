@@ -9,6 +9,9 @@ optimizer_runs = 1_000_000
 via_ir = true
 ffi = false
 fs_permissions = [{ access = "read", path = "./" }]
+# Fork tests live under test/fork/ and need network access (a Base RPC).
+# Default test run includes them. Skip them with: forge test --no-match-contract 'Fork'
+# Set BASE_RPC_URL to use a private RPC; otherwise public mainnet.base.org is used.
 
 remappings = [
     "@uniswap/v4-core/=lib/v4-core/",
@@ -30,4 +33,6 @@ fuzz = { runs = 50_000 }
 invariant = { runs = 1_000, depth = 64 }
 
 [rpc_endpoints]
+# Base mainnet. Set BASE_RPC_URL in env for a private / higher-rate-limit RPC.
+# If unset, the test setUp will fall back to Base's public endpoint at https://mainnet.base.org.
 base = "${BASE_RPC_URL}"

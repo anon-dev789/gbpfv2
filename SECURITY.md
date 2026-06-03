@@ -94,6 +94,13 @@ their failure mode if compromised and the protocol's reaction if any.
   - Sanity bounds (`maxSSR`, monotonic `chi`) in the oracle limit the magnitude of a single bad update.
 - Trust path: Base canonical OP-Stack messenger → Spark L1 authority `0xB2833…f188E`. No third-party bridge.
 
+**Interface quirks (verified by fork test):**
+- `getChi()` returns the raw stored chi (last bridge update), **not** extrapolated to the current block.
+- `getConversionRate()` returns chi extrapolated to `block.timestamp` using SSR × elapsed time.
+- `getSSR()` stores `(1 + per_second_rate)` in ray — neutral (0% APY) is `1e27`, not `0`.
+
+The Vault calls `getConversionRate()` (not `getChi()`) so yield accrues continuously between bridge updates rather than in lumps at bridge messages.
+
 ### 2.4 sUSDS and USDS tokens on Base
 
 - sUSDS: `0x5875eEE11Cf8398102FdAd704C9E96607675467a` (SkyLink-bridged, plain ERC-20)
@@ -411,3 +418,4 @@ To be populated before mainnet deploy:
 | 2026-06-03 | Added Vault module + invariants. Caught two real bugs via fuzz/invariant testing: (a) yield-share formula divided by lastChi instead of currentChi, (b) `withdraw` allowed `feeAmount` to push `pendingBeneficiarySUsds` above vault balance. Both fixed before any code shipped. | Vault |
 | 2026-06-03 | Added OracleAdapter module. Cumulative-sum TWAP anchored to Chainlink update cadence; all five committed pause triggers (staleness, deviation, sequencer-down, sequencer-grace, hysteresis) verified by unit tests. Lint-clean after annotating intentional block.timestamp / cast sites. | OracleAdapter |
 | 2026-06-03 | Added GBPF token. Solady ERC20 + permit, hook-only mint/burn, burn-from-self design to avoid arbitrary-from attack surface. | GBPF |
+| 2026-06-03 | Added fork tests against real Base mainnet infrastructure. Caught two real bugs in our assumptions about Spark's SSRAuthOracle: (1) `getChi()` returns the raw stored chi (stale between bridge updates), NOT the extrapolated value — Vault must use `getConversionRate()` instead, or yield would only accrue in lumps at bridge messages; (2) `getSSR()` returns `1 + per_second_rate` in ray (neutral = 1e27), not the differential. Vault rewired to `getConversionRate()`; ISSRAuthOracle interface doc corrected; MockSSRAuthOracle split into separate storedChi/conversionRate fields so the regime is exercised in unit tests too. | Vault, ISSRAuthOracle, MockSSRAuthOracle |

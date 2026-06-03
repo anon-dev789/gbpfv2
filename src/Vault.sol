@@ -99,8 +99,10 @@ contract Vault {
 
         // Seed the yield-share index. Any yield earned before this point is not credited to
         // the beneficiary — which is correct because the vault held no protocol funds before
-        // it was deployed.
-        lastSettledChi = ISSRAuthOracle(ssrOracle_).getChi();
+        // it was deployed. We use getConversionRate() (the extrapolated chi) rather than
+        // getChi() (the stored chi) so the seed reflects the actual rate at deploy time, not
+        // the rate as of the last bridge update.
+        lastSettledChi = ISSRAuthOracle(ssrOracle_).getConversionRate();
     }
 
     // ============================================================================================
@@ -254,7 +256,11 @@ contract Vault {
     ///      Using principalSUsds (not vault balance minus pending) is also correctness-critical:
     ///      newly-arrived deposits MUST NOT retroactively earn yield they did not accrue.
     function _settleBeneficiaryYield() internal {
-        uint256 currentChi = SSR_ORACLE.getChi();
+        // Use the extrapolated conversion rate, not the raw stored chi. Spark's getChi() only
+        // changes when the cross-chain bridge pushes a rate update (rare); the conversion rate
+        // ticks every block based on the last bridged SSR. Using getChi() would mean yield
+        // accrues to the beneficiary only in lumps at bridge messages instead of continuously.
+        uint256 currentChi = SSR_ORACLE.getConversionRate();
         uint256 lastChi = lastSettledChi;
 
         // If chi hasn't advanced (same block, or SSR=0, or oracle paused), nothing to credit.
@@ -292,7 +298,8 @@ contract Vault {
     /// @dev Read-only preview of how much yield would be credited if we settled right now.
     ///      Uses the same formula as _settleBeneficiaryYield; see that function for the derivation.
     function _previewBeneficiaryShare() internal view returns (uint256) {
-        uint256 currentChi = SSR_ORACLE.getChi();
+        // See _settleBeneficiaryYield for why getConversionRate() rather than getChi().
+        uint256 currentChi = SSR_ORACLE.getConversionRate();
         uint256 lastChi = lastSettledChi;
         if (currentChi <= lastChi) return 0;
         uint256 principal = principalSUsds;
