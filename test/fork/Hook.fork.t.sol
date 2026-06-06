@@ -148,24 +148,9 @@ contract HookForkTest is Test {
         router = new MinimalRouter(V4_POOL_MANAGER);
         deal(USDS_TOKEN, user, 10_000e18);
 
-        // Bootstrap: pre-mint 1 wei of GBPF to a burn address so the first user swap doesn't
-        // trip the gbpfSupply == 0 revert. We do this by performing a small mint via the
-        // router from a deployer-owned address, then transferring the resulting GBPF to dead.
-        // For test simplicity, we'll just mint the seed directly via the hook (impossible on
-        // mainnet but fine in test setup).
-        // To keep this test pure-fork-flow, do a real swap instead:
-        address seeder = makeAddr("seeder");
-        deal(USDS_TOKEN, seeder, 2e18);
-        vm.startPrank(seeder);
-        IERC20Like(USDS_TOKEN).approve(address(router), type(uint256).max);
-        SwapParams memory seedParams =
-            SwapParams({zeroForOne: usdsIsToken0, amountSpecified: -int256(1e18), sqrtPriceLimitX96: 0});
-        router.swap(poolKey, seedParams, seeder);
-        // Now the seeder holds some GBPF. Transfer it to 0xDeaD.
-        uint256 seedGbpf = gbpf.balanceOf(seeder);
-        // forge-lint: disable-next-line(erc20-unchecked-transfer)
-        gbpf.transfer(0x000000000000000000000000000000000000dEaD, seedGbpf);
-        vm.stopPrank();
+        // GBPF's constructor already minted 1 wei of dust to 0xDeaD, so gbpfSupply > 0 from
+        // the moment of deploy. The first user mint via the Hook proceeds normally — no need
+        // for a separate bootstrap seed step.
     }
 
     // ============================================================

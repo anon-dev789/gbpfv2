@@ -35,8 +35,11 @@ contract GBPFTest is Test {
         assertEq(token.decimals(), 18);
     }
 
-    function test_initial_supply_is_zero() public view {
-        assertEq(token.totalSupply(), 0);
+    function test_initial_supply_is_dust() public view {
+        // The constructor mints 1 wei to 0xDeaD to ensure totalSupply > 0 from genesis.
+        // This eliminates the bootstrap chicken-and-egg with the Hook's gbpfSupply == 0 guard.
+        assertEq(token.totalSupply(), 1, "totalSupply should equal the constructor dust mint");
+        assertEq(token.balanceOf(0x000000000000000000000000000000000000dEaD), 1, "dust should land at 0xDeaD");
     }
 
     function test_hook_address_immutable() public view {
@@ -78,7 +81,8 @@ contract GBPFTest is Test {
         vm.prank(hook);
         token.mint(alice, 100e18);
         assertEq(token.balanceOf(alice), 100e18);
-        assertEq(token.totalSupply(), 100e18);
+        // Total supply = 1 wei dust + 100e18 minted.
+        assertEq(token.totalSupply(), 100e18 + 1);
     }
 
     function test_mint_by_random_address_reverts() public {
@@ -111,7 +115,8 @@ contract GBPFTest is Test {
         token.burn(40e18);
         vm.stopPrank();
         assertEq(token.balanceOf(hook), 60e18);
-        assertEq(token.totalSupply(), 60e18);
+        // 1 wei dust + 60e18 remaining.
+        assertEq(token.totalSupply(), 60e18 + 1);
     }
 
     function test_burn_by_random_address_reverts() public {
@@ -132,10 +137,10 @@ contract GBPFTest is Test {
 
     function test_burn_zero_succeeds() public {
         // A zero burn is a no-op but should not revert (consistent with standard ERC20 transfer
-        // semantics).
+        // semantics). Supply remains at the dust value.
         vm.prank(hook);
         token.burn(0);
-        assertEq(token.totalSupply(), 0);
+        assertEq(token.totalSupply(), 1);
     }
 
     // ============================================================
@@ -251,7 +256,8 @@ contract GBPFTest is Test {
         token.burn(c);
         vm.stopPrank();
 
-        assertEq(token.totalSupply(), uint256(a) + uint256(b) - uint256(c));
+        // Total supply = 1 wei dust + mints - burns.
+        assertEq(token.totalSupply(), uint256(a) + uint256(b) - uint256(c) + 1);
         assertEq(token.balanceOf(alice), a);
         assertEq(token.balanceOf(hook), uint256(b) - uint256(c));
     }

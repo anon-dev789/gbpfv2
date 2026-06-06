@@ -233,10 +233,10 @@ contract HookInvariantsTest is Test {
         assertLe(vault.pendingBeneficiarySUsds(), sUsds.balanceOf(address(vault)));
     }
 
-    /// GBPF totalSupply == 0.8e18 (the bootstrap mint, locked at 0xDeaD) + ghostMintedGbpf -
-    /// ghostBurnedGbpf. Tracks supply against handler activity.
+    /// GBPF totalSupply == 1 wei (constructor dust mint) + 0.8e18 (bootstrap mint, both locked at
+    /// 0xDeaD) + ghostMintedGbpf - ghostBurnedGbpf. Tracks supply against handler activity.
     function invariant_supply_matches_ghost_accumulators() public view {
-        uint256 expected = 0.8e18 + handler.ghostMintedGbpf() - handler.ghostBurnedGbpf();
+        uint256 expected = 1 + 0.8e18 + handler.ghostMintedGbpf() - handler.ghostBurnedGbpf();
         assertEq(gbpf.totalSupply(), expected, "supply diverged from ghost accumulators");
     }
 

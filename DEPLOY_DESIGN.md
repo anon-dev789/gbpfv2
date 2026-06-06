@@ -104,23 +104,22 @@ The Foundry script could call PoolManager via a thin local router. Rejected beca
 
 ## The "initial mint with empty supply" problem
 
-The hook's `beforeSwap` reverts if `gbpfSupply == 0` (guard against divide-by-zero in solvency math). The seed mint is the first mint, so at that moment supply is zero. The hook will revert.
+The Hook's `beforeSwap` reverts if `gbpfSupply == 0` (guard against divide-by-zero in solvency math). The seed mint would be the first mint, so at that moment supply would be zero — and the Hook would revert.
 
-Options:
-- Special-case the first mint in the hook (no guard if supply is 0). Adds code complexity and an obvious attack surface.
-- Pre-mint a tiny amount of GBPF directly before the seed swap. Bypass.
-- Allow the hook to compute "infinite solvency" when supply is 0 (treat as healthy mint at oracle rate, no curve spread). Same as the special case.
+**Resolution: the GBPF contract's constructor mints 1 wei of GBPF to `0xdEaD`.**
 
-**Decision: pre-mint a dust amount of GBPF directly to the burn address BEFORE the seed swap, as part of the deploy script.**
+`totalSupply()` is therefore non-zero from the moment GBPF is deployed, before the Hook is even initialised. The first real user mint through the Hook proceeds normally with no special bootstrap step required.
 
-Specifically:
-- Step 9b: `gbpf.mint(BURN_ADDRESS, 1)` (one wei of GBPF).
-- This brings totalSupply to 1 wei. Solvency at that moment is effectively infinite (any positive amount of sUSDS / 1 wei GBPF) but the curve saturates and the math doesn't divide by zero.
-- Then step 10 (the seed swap) proceeds normally.
+Why in the constructor (not the deploy script):
+- The deploy script can't mint directly because GBPF's `mint` is hook-only. Pre-`initialize`, HOOK is zero and any `mint` call reverts `NotInitialized` (intentional defence-in-depth).
+- Adding a constructor-mint sidesteps the bootstrap chicken-and-egg cleanly: dust appears at deploy time without requiring any privileged operation post-deploy.
+- The 1 wei is sent to `0xdEaD` which has no key behind it and no contract code. It's effectively burned.
+- Audit surface: the constructor mint is a single `_mint(DUST_BURN_ADDRESS, 1)` call. Trivial to verify.
 
-The dust mint and the seed swap together establish a non-degenerate starting state.
-
-Alternative: have the hook's `gbpfSupply == 0` guard return the oracle price directly (no curve, no fee) for that single transaction. **Rejected** — adds a code branch in the hot path that's almost never executed but must be audited.
+Alternatives considered and rejected:
+- **Pre-mint via the deploy script.** Impossible because mint is hook-only post-initialize, and we can't mint pre-initialize because the contracts aren't wired yet.
+- **Have the hook special-case `gbpfSupply == 0`.** Adds an audited branch in the hot swap path that's never executed post-bootstrap.
+- **Pre-mint via a real exact-output mint swap of 1 wei GBPF.** Catch-22: that swap itself goes through the hook, which itself reverts on zero supply.
 
 ## HookMiner
 

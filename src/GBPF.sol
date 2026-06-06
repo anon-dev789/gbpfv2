@@ -18,11 +18,27 @@ contract GBPF is ERC20 {
     /// @dev The only address authorised to mint and burn GBPF. Set once via initialize().
     address public HOOK;
 
+    /// @dev Standard "burn" address used to lock the dust mint forever.
+    address internal constant DUST_BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
+
+    /// @dev Dust mint at deploy ensures totalSupply > 0 from genesis. This eliminates the
+    ///      chicken-and-egg in bootstrapping: the Hook's solvency math has a `totalSupply == 0`
+    ///      revert guard (avoids divide-by-zero), but the first mint via the Hook would
+    ///      otherwise trip that guard. By minting 1 wei to a permanently-locked address in the
+    ///      constructor, totalSupply is non-zero from the moment the contract exists, so the
+    ///      first real user mint via the Hook proceeds normally.
+    uint256 internal constant DUST_AMOUNT = 1;
+
     error NotHook();
     error MintToZeroAddress();
     error AlreadyInitialized();
     error ZeroHook();
     error NotInitialized();
+
+    constructor() {
+        // Mint dust to the burn address. _mint is internal-only; not gated by HOOK.
+        _mint(DUST_BURN_ADDRESS, DUST_AMOUNT);
+    }
 
     /// @notice One-shot setter for the Hook address. After this call, HOOK is fixed forever.
     /// @dev    Reverts if called twice or with the zero address.
