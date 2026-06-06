@@ -72,24 +72,35 @@ Rejected because the initializer pattern is simpler, audit surface is smaller, a
 
 ## Seed on mainnet
 
-Step 10.d–e require calling vault.deposit and gbpf.mint with msg.sender == hook. On a fork test we can use `vm.prank(hook)`. On mainnet there is no `vm.prank`.
+Step 10.d–e require calling vault.deposit and gbpf.mint with msg.sender == hook. The script can't simply call them directly because it isn't the hook.
 
-Two options:
+The seed happens via a real swap through the V4 PoolManager → hook. This is one of two ways:
 
-### Option I: Seed via a real mint swap through the hook + PoolManager
+### Operator-driven seed (chosen)
 
-The deployer initialises the pool, holds the seed USDS, and performs a real exact-input mint swap of $1 USDS via the PoolManager → hook. The hook does its normal flow: pulls USDS, converts to sUSDS, deposits to vault, mints GBPF. The deployer then transfers the resulting GBPF (~0.8) to address(0xDeaD) via a normal ERC20 transfer.
+The deploy script ends after contracts are deployed and initialized. It prints operator instructions for the post-deploy steps:
 
-- ✅ No bypass of the hook's normal flow; the seed is "the first real user mint."
-- ✅ No special path in the production contracts; the deploy script just executes a swap.
-- ✅ The deployer's GBPF goes to a burn address via a permitted transfer (not a mint to address(0)).
-- Caveat: requires the PoolManager to be aware of the pool (PoolManager.initialize() must be called first), which is one more step in the script.
+1. Initialise the V4 pool by calling `PoolManager.initialize()` with the canonical PoolKey.
+2. Pre-mint 1 wei GBPF to the burn address (avoids gbpfSupply == 0 revert; see below).
+3. Execute a $1 USDS exact-input mint swap via V4. Resulting GBPF goes to the deployer.
+4. The deployer transfers all GBPF to 0xdEaD (normal ERC20 transfer, not a mint to address(0)).
 
-### Option II: A one-shot `seed()` function on the hook
+**Why not in-script:** the swap requires the PoolManager.unlock() callback machinery and a router-style helper. Writing all that in a Foundry script is possible but adds complexity for a one-time operation that benefits from human verification anyway.
 
-Add a `seed()` function callable exactly once that bypasses the swap flow but uses the same code path. More code, more audit surface. Rejected.
+**Front-running risk:** between "contracts deployed" and "pool initialised + seeded," someone could:
 
-**Decision: Option I.** The hook has no seed function. The deploy script performs a real mint swap.
+- **Initialise the V4 pool with the wrong PoolKey.** The hook's WrongPool check rejects swaps against any pool with a non-canonical key. The pool is useless. No harm.
+- **Initialise the pool with the *correct* key and execute the seed swap themselves.** They'd pay 1 USDS, receive ~0.8 GBPF at oracle price. The protocol is bootstrapped exactly as intended; only the GBPF ends up with them instead of the deployer's burn address. Acceptable — they paid for it.
+- **Do a tiny seed (e.g. 1 wei USDS) to capture outsized supply share.** The curve responds proportionally to solvency, so they can't actually extract value — they end up with 0.8 nano-GBPF and the protocol starts with weird tiny numbers but no economic asymmetry.
+
+The cleanest mitigation is to perform steps 1–4 atomically from a single deployer-owned EOA in a single transaction (e.g. via a multicall router) immediately after the deploy script returns.
+
+### In-script seed (rejected)
+
+The Foundry script could call PoolManager via a thin local router. Rejected because:
+- Doubles the script's complexity.
+- The first PoolManager.initialize() call is a verifiable, irreversible step that benefits from human confirmation.
+- Front-running risk is the same either way: between "Hook deployed" and "first swap executed" there is *always* a window.
 
 ## The "initial mint with empty supply" problem
 
