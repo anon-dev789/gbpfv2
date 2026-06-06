@@ -249,17 +249,25 @@ contract Hook is IHooks {
 
     /// @dev Returns the mint price (USDS per GBPF) in WAD: twap * (WAD + spread + flatFee).
     function _mintPriceWad(uint256 twapWad, int256 spreadWad) internal pure returns (uint256) {
+        // Safety: FLAT_FEE_WAD = 2e15 ≪ 2^255; cast cannot wrap.
+        // forge-lint: disable-next-line(unsafe-typecast)
         int256 mul = WAD_INT + spreadWad + int256(FLAT_FEE_WAD);
         // mul is positive in any operating regime; bounded below by:
         //   spreadWad ≥ -S_MAX = -5e16, so WAD - 5e16 + 2e15 ≈ 9.5e17 > 0.
         require(mul > 0, "mul nonpositive");
+        // Safety: mul > 0 by the check above; cast cannot wrap.
+        // forge-lint: disable-next-line(unsafe-typecast)
         return FixedPointMathLib.mulWad(twapWad, uint256(mul));
     }
 
     /// @dev Returns the redeem price (USDS per GBPF) in WAD: twap * (WAD + spread - flatFee).
     function _redeemPriceWad(uint256 twapWad, int256 spreadWad) internal pure returns (uint256) {
+        // Safety: FLAT_FEE_WAD = 2e15 ≪ 2^255; cast cannot wrap.
+        // forge-lint: disable-next-line(unsafe-typecast)
         int256 mul = WAD_INT + spreadWad - int256(FLAT_FEE_WAD);
         require(mul > 0, "mul nonpositive");
+        // Safety: mul > 0 by the check above; cast cannot wrap.
+        // forge-lint: disable-next-line(unsafe-typecast)
         return FixedPointMathLib.mulWad(twapWad, uint256(mul));
     }
 
@@ -334,13 +342,13 @@ contract Hook is IHooks {
         if (isExactInput) {
             // specified token is USDS (the input). Hook is owed usdsIn.
             // unspecified token is GBPF (the output). Hook owes gbpfOut.
-            specifiedDelta = int128(int256(usdsIn));
-            unspecifiedDelta = -int128(int256(gbpfOut));
+            specifiedDelta = _toPositiveInt128(usdsIn);
+            unspecifiedDelta = -_toPositiveInt128(gbpfOut);
         } else {
             // specified token is GBPF (the output). Hook owes gbpfOut.
             // unspecified token is USDS (the input). Hook is owed usdsIn.
-            specifiedDelta = -int128(int256(gbpfOut));
-            unspecifiedDelta = int128(int256(usdsIn));
+            specifiedDelta = -_toPositiveInt128(gbpfOut);
+            unspecifiedDelta = _toPositiveInt128(usdsIn);
         }
         return (IHooks.beforeSwap.selector, toBeforeSwapDelta(specifiedDelta, unspecifiedDelta), 0);
     }
@@ -403,12 +411,32 @@ contract Hook is IHooks {
         int128 specifiedDelta;
         int128 unspecifiedDelta;
         if (isExactInput) {
-            specifiedDelta = int128(int256(gbpfIn));
-            unspecifiedDelta = -int128(int256(usdsOut));
+            specifiedDelta = _toPositiveInt128(gbpfIn);
+            unspecifiedDelta = -_toPositiveInt128(usdsOut);
         } else {
-            specifiedDelta = -int128(int256(usdsOut));
-            unspecifiedDelta = int128(int256(gbpfIn));
+            specifiedDelta = -_toPositiveInt128(usdsOut);
+            unspecifiedDelta = _toPositiveInt128(gbpfIn);
         }
         return (IHooks.beforeSwap.selector, toBeforeSwapDelta(specifiedDelta, unspecifiedDelta), 0);
     }
+
+    // ============================================================================================
+    // Cast helpers
+    // ============================================================================================
+
+    /// @dev Cast a non-negative uint256 amount to int128 for use in BeforeSwapDelta packing.
+    ///      Reverts AmountTooLarge if the value exceeds int128 max.
+    ///
+    ///      The amounts cast here are mint/redeem token quantities. Realistic operating
+    ///      bounds (sUSDS / USDS / GBPF amounts in 18-decimal WAD units) are far below
+    ///      int128 max (~1.7e38), but for an immutable on-chain contract we revert visibly
+    ///      rather than silently wrap.
+    function _toPositiveInt128(uint256 amount) internal pure returns (int128) {
+        if (amount > uint256(uint128(type(int128).max))) revert AmountTooLarge(amount);
+        // Safety: amount ≤ int128 max by the check above; both casts are sound.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return int128(int256(amount));
+    }
+
+    error AmountTooLarge(uint256 amount);
 }
