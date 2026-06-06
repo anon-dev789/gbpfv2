@@ -388,15 +388,103 @@ Earlier draft accepted `burn(from, amount)` allowing the hook to burn from arbit
 
 ---
 
-## 7. Modules _(future, populated as built)_
+## 7. Module: Hook
 
-- 7.1 **Hook** — V4 `beforeSwap` integration, return-delta encoding, flash-accounting settlement; composes Curve + Vault + OracleAdapter + GBPF
-- 7.2 **Deploy script** — atomic seed-and-burn, CREATE2 determinism
-- 7.3 **Fork tests** — against real Base infrastructure
+**Path:** `src/Hook.sol`
+**Type:** Immutable V4 hook contract. The protocol. Composes Curve + Vault + OracleAdapter + GBPF + Spark PSM3.
+
+### 7.1 Surface
+
+- `beforeSwap(address, PoolKey, SwapParams, bytes)` — the only functional callback. All other IHooks callbacks revert `InvalidHookCall` (the corresponding flag bits are not set on the hook's mined CREATE2 address, so PoolManager will never invoke them, but the reverts are defence-in-depth).
+
+### 7.2 Trust gates
+
+| Check | Where | If it fails |
+|---|---|---|
+| `msg.sender == POOL_MANAGER` | beforeSwap top | reverts `NotPoolManager` |
+| `keccak256(key) == POOL_KEY_HASH` | beforeSwap | reverts `WrongPool` |
+| `amountSpecified != 0` | beforeSwap | reverts `ZeroSwap` |
+| Oracle `healthy == true` | after `ORACLE.update()` | reverts `OraclePaused` |
+| `gbpfSupply > 0` | post-bootstrap invariant | reverts `InvalidHookCall` |
+
+### 7.3 Pricing
+
+```
+priceMultiplier_mint   = WAD + spread + FLAT_FEE_WAD     // both signed; cast safe in operating regime
+priceMultiplier_redeem = WAD + spread - FLAT_FEE_WAD
+mintPriceUsdsPerGbpf   = twap * priceMultiplier_mint   / WAD
+redeemPriceUsdsPerGbpf = twap * priceMultiplier_redeem / WAD
+```
+
+Exact-input rounds **down** (protocol favourable); exact-output rounds **up** (protocol favourable).
+
+### 7.4 Token movement
+
+- **Mint:** `PoolManager.take(USDS) → PSM3.swapExactIn(USDS→sUSDS, recv=vault) → Vault.deposit(sUSDS, fee) → GBPF.mint(self) → sync/transfer/settle(GBPF)`.
+- **Redeem:** `PoolManager.take(GBPF) → GBPF.burn → PSM3.previewSwapExactOut → Vault.withdraw(sUSDS, self, fee) → PSM3.swapExactOut(sUSDS→USDS, recv=self) → sync/transfer/settle(USDS)`.
+
+PSM3 uses the same SSRAuthOracle the Vault reads, so `previewSwap*` agrees with our solvency math exactly within a block. No basis risk.
+
+### 7.5 Verified properties
+
+13 hook tests + integration with all other modules. See `test/Hook.t.sol`.
+
+### 7.6 What we have NOT done for this module
+
+- Slither pass (deferred).
+- Invariant tests across random swap sequences.
+- Fork test that exercises the hook end-to-end against the real PoolManager (the existing fork tests only deploy and verify wiring).
+- The 20 int128/int256 casts in `beforeSwap` delta construction still carry lint warnings. All safe by construction (amounts ≤ uint256.max → fit in int128 since they come from int256), to be annotated.
 
 ---
 
-## 8. Deployment posture _(future)_
+## 8. Deploy
+
+**Paths:** `script/Deploy.s.sol`, `script/HookMiner.sol`
+
+### 8.1 Circular dependency resolution: one-shot `initialize(hook)`
+
+The Hook's CREATE2 address must encode V4 flag bits (BEFORE_SWAP | BEFORE_SWAP_RETURNS_DELTA), and its constructor takes Vault and GBPF addresses. So:
+
+- Vault and GBPF constructors do NOT take the hook address.
+- Both contracts expose `initialize(address hook)` callable exactly once. After the call, HOOK is fixed forever.
+- All hook-only functions (`deposit`, `withdraw`, `mint`, `burn`) revert `NotInitialized` if called before initialize.
+
+**Audit must confirm:**
+- `initialize` reverts `AlreadyInitialized` on second call.
+- `initialize` reverts `ZeroHook` on null input.
+- No other path can change `HOOK`.
+
+### 8.2 Verified properties (`DeployForkTest`, 7 tests)
+
+- Deploy script succeeds against Base mainnet at block 46,700,000.
+- Hook address has exactly `BEFORE_SWAP_FLAG | BEFORE_SWAP_RETURNS_DELTA_FLAG` in its low 14 bits and no other hook flag bits.
+- OracleAdapter, Vault, and Hook are wired to the real Base addresses we hardcoded.
+- Vault.lastSettledChi is seeded from the real Spark oracle's `getConversionRate()`.
+- `initialize()` on Vault and GBPF reverts when re-called post-deploy.
+- Hook has max allowances to PSM3 for both USDS and sUSDS.
+
+### 8.3 Seed-and-burn
+
+Performed by the operator post-deploy, not by the script (see DEPLOY_DESIGN.md for the design rationale). The operator must:
+
+1. `PoolManager.initialize()` with the canonical PoolKey.
+2. Pre-mint 1 wei of GBPF (avoids `gbpfSupply == 0` revert) via exact-output mint.
+3. Execute a 1 USDS exact-input mint swap.
+4. Transfer all resulting GBPF to `0xdEaD`.
+
+**Front-running risk:** between contracts-deployed and seed-completed, an attacker could initialise the V4 pool first or execute the seed swap themselves. Neither extracts value — they pay 1 USDS for ~0.8 GBPF at oracle price, the protocol is bootstrapped as intended, only the GBPF beneficiary differs.
+
+---
+
+## 9. Modules _(future, populated as built)_
+
+- 9.1 **Fork test of full hook flow** — exercise the hook end-to-end against real PoolManager
+- 9.2 **Invariant tests on the hook** — random swap sequences
+
+---
+
+## 10. Deployment posture _(future)_
 
 To be populated before mainnet deploy:
 
@@ -410,7 +498,7 @@ To be populated before mainnet deploy:
 
 ---
 
-## 9. Changelog
+## 11. Changelog
 
 | Date | Change | Affected modules |
 |---|---|---|
@@ -419,3 +507,8 @@ To be populated before mainnet deploy:
 | 2026-06-03 | Added OracleAdapter module. Cumulative-sum TWAP anchored to Chainlink update cadence; all five committed pause triggers (staleness, deviation, sequencer-down, sequencer-grace, hysteresis) verified by unit tests. Lint-clean after annotating intentional block.timestamp / cast sites. | OracleAdapter |
 | 2026-06-03 | Added GBPF token. Solady ERC20 + permit, hook-only mint/burn, burn-from-self design to avoid arbitrary-from attack surface. | GBPF |
 | 2026-06-03 | Added fork tests against real Base mainnet infrastructure. Caught two real bugs in our assumptions about Spark's SSRAuthOracle: (1) `getChi()` returns the raw stored chi (stale between bridge updates), NOT the extrapolated value — Vault must use `getConversionRate()` instead, or yield would only accrue in lumps at bridge messages; (2) `getSSR()` returns `1 + per_second_rate` in ray (neutral = 1e27), not the differential. Vault rewired to `getConversionRate()`; ISSRAuthOracle interface doc corrected; MockSSRAuthOracle split into separate storedChi/conversionRate fields so the regime is exercised in unit tests too. | Vault, ISSRAuthOracle, MockSSRAuthOracle |
+| 2026-06-03 | Added Hook (V4 integration) with end-to-end tests. 13/13 tests pass covering mint/redeem × exact-input/exact-output, oracle-pause guard, wrong-pool guard, only-PoolManager guard. Uses Spark PSM3 at `0x1601843c5E9bC251A3272907010AFa41Fa18347E` for atomic USDS↔sUSDS conversion at the same SSR oracle rate the Vault reads. | Hook |
+| 2026-06-06 | Refactored Vault and GBPF for one-shot `initialize(hook)` to resolve the circular deploy dependency (Hook's CREATE2 address must encode V4 flag bits; its constructor takes Vault and GBPF addresses). Vault and GBPF now have non-immutable `HOOK` set exactly once via `initialize`. Added 9 tests for the initialize semantics. Trust model: protocol is "deploy-script-immutable" — only the deploying transaction can call `initialize`, and re-calls revert `AlreadyInitialized`. | Vault, GBPF |
+| 2026-06-06 | Added HookMiner library for V4 hook salt mining. Iterates CREATE2 salts until the resulting address has exactly the required hook flag bits in its low 14 bits (0x88) and no other bits set. ~3000 iterations on average for our 2-bit pattern. | HookMiner |
+| 2026-06-06 | Added Deploy script and fork test against Base mainnet. Script mines the hook salt, deploys all five contracts in order, calls initialize on Vault and GBPF. Pre-flight checks verify all hardcoded Base addresses are live and the SSR oracle reports a sane rate. Seed-and-burn is deferred to the operator post-deploy (DEPLOY_DESIGN.md "seed on mainnet" covers the front-running analysis). Fork test confirmed: deploy succeeds against real Base infrastructure, all wiring correct. | Deploy, HookMiner |
+| 2026-06-06 | Confirmed oracle architecture: single Chainlink GBP/USD feed, no admin-controlled fallback. The protocol's pause logic (staleness, deviation, sequencer, hysteresis) is the no-admin failure-handling mechanism. If Chainlink fails, the protocol pauses; users can redeem after Chainlink recovers. The alternative — admin-controlled price feeds — would defeat immutability. Documented as an intentional design choice, not a limitation. | (design only) |
