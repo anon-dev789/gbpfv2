@@ -34,7 +34,11 @@ contract Vault {
     using SafeTransferLib for address;
 
     /// @dev The protocol hook that is authorised to deposit and withdraw collateral.
-    address public immutable HOOK;
+    ///      Set once via initialize() during deployment; cannot be changed thereafter.
+    ///      Not `immutable` because of the circular deploy dependency with Hook
+    ///      (Hook's constructor needs Vault's address; Vault needs Hook's address).
+    ///      See DEPLOY_DESIGN.md for the dependency analysis.
+    address public HOOK;
 
     /// @dev The hardcoded multisig that receives the beneficiary share. Fixed at deploy forever.
     address public immutable BENEFICIARY;
@@ -83,16 +87,20 @@ contract Vault {
     error InsufficientBackingForRedeem(uint256 requested, uint256 available);
     error NothingToWithdraw();
     error FeeExceedsAmount(uint256 fee, uint256 amount);
+    error AlreadyInitialized();
+    error ZeroHook();
+    error NotInitialized();
 
     // ============================================================================================
     // Construction
     // ============================================================================================
 
-    constructor(address hook_, address beneficiary_, address sUsds_, address ssrOracle_) {
-        // All four addresses are load-bearing; reverting on zero would just turn a deploy
-        // mistake into a redeploy. Caller (the deploy script) is responsible for getting
-        // these right — they are immutable for life of protocol.
-        HOOK = hook_;
+    constructor(address beneficiary_, address sUsds_, address ssrOracle_) {
+        // BENEFICIARY, SUSDS, and SSR_ORACLE are set in the constructor and truly immutable.
+        // HOOK is set later via initialize() because of the circular deploy dependency: the
+        // Hook contract's address must encode V4 flag bits (CREATE2 mining), and its
+        // constructor takes the Vault address. So we deploy Vault first, then deploy Hook
+        // with Vault's address as a constructor arg, then call vault.initialize(hook).
         BENEFICIARY = beneficiary_;
         SUSDS = sUsds_;
         SSR_ORACLE = ISSRAuthOracle(ssrOracle_);
@@ -103,6 +111,17 @@ contract Vault {
         // getChi() (the stored chi) so the seed reflects the actual rate at deploy time, not
         // the rate as of the last bridge update.
         lastSettledChi = ISSRAuthOracle(ssrOracle_).getConversionRate();
+    }
+
+    /// @notice One-shot setter for the Hook address. Called by the deploy script after the Hook
+    ///         is deployed at its mined CREATE2 address. After this call, HOOK is fixed forever.
+    /// @dev    Reverts if called twice or with the zero address. The first caller of this
+    ///         function effectively owns the Vault forever — the deploy script must call this
+    ///         atomically in the same transaction as Vault and Hook deployment.
+    function initialize(address hook_) external {
+        if (HOOK != address(0)) revert AlreadyInitialized();
+        if (hook_ == address(0)) revert ZeroHook();
+        HOOK = hook_;
     }
 
     // ============================================================================================
@@ -118,6 +137,7 @@ contract Vault {
     ///      it does not verify a balance change to avoid double-accounting in atomic flows
     ///      where multiple internal calls happen in one transaction.
     function deposit(uint256 sUsdsAmount, uint256 feeAmount) external {
+        if (HOOK == address(0)) revert NotInitialized();
         if (msg.sender != HOOK) revert NotHook();
         if (sUsdsAmount == 0) revert ZeroAmount();
         // Defence-in-depth: even though the hook is the only caller, verify that the fee
@@ -147,6 +167,7 @@ contract Vault {
     ///                      the vault (it is sUSDS the user *did not* receive) and is added to
     ///                      pendingBeneficiarySUsds.
     function withdraw(uint256 sUsdsAmount, address to, uint256 feeAmount) external {
+        if (HOOK == address(0)) revert NotInitialized();
         if (msg.sender != HOOK) revert NotHook();
         if (sUsdsAmount == 0) revert ZeroAmount();
 

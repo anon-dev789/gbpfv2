@@ -110,7 +110,8 @@ contract VaultInvariantsTest is Test {
 
         sUsds = new MockSUsds();
         oracle = new MockSSRAuthOracle(RAY);
-        vault = new Vault(hook, beneficiary, address(sUsds), address(oracle));
+        vault = new Vault(beneficiary, address(sUsds), address(oracle));
+        vault.initialize(hook);
 
         handler = new VaultHandler(vault, sUsds, oracle, hook, beneficiary);
 

@@ -73,22 +73,16 @@ contract HookTest is Test {
             address(cl), address(seq), TWAP_WINDOW, MAX_STALENESS, MAX_STEP_WAD, SEQUENCER_GRACE, COOLDOWN
         );
 
-        // Deploy the hook. Its constructor will compute USDS_IS_TOKEN0 and store the PoolKey hash.
-        // The vault and GBPF references the hook for mint/burn / hook-only deposit/withdraw —
-        // so we need to deploy in the right order, with placeholder addresses where necessary.
-        // Easiest: predict the hook's CREATE address and pass it as HOOK to GBPF + Vault.
-        // forge-std's makeAddr can't predict CREATE, so use vm.computeCreateAddress.
-        uint256 hookNonce = vm.getNonce(address(this));
-        // After: GBPF and Vault deployments occupy nonces hookNonce and hookNonce+1.
-        // Then the hook deploys at hookNonce+2.
-        address predictedHook = vm.computeCreateAddress(address(this), hookNonce + 2);
-
-        gbpf = new GBPF(predictedHook); // nonce hookNonce
-        vault = new Vault(predictedHook, beneficiary, address(sUsds), address(ssr)); // nonce hookNonce+1
+        // Deploy GBPF and Vault first (with HOOK unset), then the Hook (knowing both addresses),
+        // then call initialize(hook) on Vault and GBPF to wire the HOOK address. This matches
+        // the production deploy pattern described in DEPLOY_DESIGN.md.
+        gbpf = new GBPF();
+        vault = new Vault(beneficiary, address(sUsds), address(ssr));
         hook = new Hook(
             address(pm), address(vault), address(oracle), address(gbpf), address(usds), address(sUsds), address(psm)
-        ); // nonce hookNonce+2
-        require(address(hook) == predictedHook, "hook address prediction wrong");
+        );
+        vault.initialize(address(hook));
+        gbpf.initialize(address(hook));
 
         // Build the canonical poolKey the hook expects.
         bool usdsIsToken0 = address(usds) < address(gbpf);

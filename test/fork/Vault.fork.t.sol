@@ -28,7 +28,8 @@ contract VaultForkTest is Test {
         hook = makeAddr("hook");
         beneficiary = makeAddr("beneficiary");
 
-        vault = new Vault(hook, beneficiary, SUSDS_TOKEN, SPARK_SSR_AUTH_ORACLE);
+        vault = new Vault(beneficiary, SUSDS_TOKEN, SPARK_SSR_AUTH_ORACLE);
+        vault.initialize(hook);
 
         // We need some sUSDS to deposit. Use vm.deal-equivalent for ERC20: deal cheatcode.
         sUsdsWhale = makeAddr("whale");

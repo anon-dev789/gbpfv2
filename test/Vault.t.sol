@@ -26,7 +26,8 @@ contract VaultTest is Test {
 
         sUsds = new MockSUsds();
         oracle = new MockSSRAuthOracle(RAY); // start chi at 1.0 in ray
-        vault = new Vault(hook, beneficiary, address(sUsds), address(oracle));
+        vault = new Vault(beneficiary, address(sUsds), address(oracle));
+        vault.initialize(hook);
     }
 
     // ============================================================
@@ -39,6 +40,38 @@ contract VaultTest is Test {
 
     function test_constructor_pendingBeneficiary_starts_zero() public view {
         assertEq(vault.pendingBeneficiarySUsds(), 0);
+    }
+
+    // ============================================================
+    // initialize()
+    // ============================================================
+
+    function test_initialize_sets_HOOK() public view {
+        assertEq(vault.HOOK(), hook, "initialize did not set HOOK");
+    }
+
+    function test_initialize_revertsOnSecondCall() public {
+        vm.expectRevert(Vault.AlreadyInitialized.selector);
+        vault.initialize(makeAddr("other"));
+    }
+
+    function test_initialize_revertsOnZeroAddress() public {
+        Vault fresh = new Vault(beneficiary, address(sUsds), address(oracle));
+        vm.expectRevert(Vault.ZeroHook.selector);
+        fresh.initialize(address(0));
+    }
+
+    function test_deposit_revertsBeforeInitialize() public {
+        Vault fresh = new Vault(beneficiary, address(sUsds), address(oracle));
+        // Pre-initialize, deposit reverts NotInitialized for any caller.
+        vm.expectRevert(Vault.NotInitialized.selector);
+        fresh.deposit(1e18, 0);
+    }
+
+    function test_withdraw_revertsBeforeInitialize() public {
+        Vault fresh = new Vault(beneficiary, address(sUsds), address(oracle));
+        vm.expectRevert(Vault.NotInitialized.selector);
+        fresh.withdraw(1e18, user, 0);
     }
 
     // ============================================================

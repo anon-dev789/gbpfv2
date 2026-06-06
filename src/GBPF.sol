@@ -10,14 +10,25 @@ import {ERC20} from "solady/tokens/ERC20.sol";
 /// @dev Immutable. No owner, no upgrade, no pause on the token itself (pause is enforced
 ///      at the hook layer). The token does not freeze, doesn't have blocklists, and does
 ///      not implement transfer hooks beyond the standard ERC20 contract.
+///
+///      HOOK is set once via initialize() during deployment because of the circular deploy
+///      dependency: the Hook's CREATE2 address must encode V4 flag bits, and its constructor
+///      takes the GBPF address. See DEPLOY_DESIGN.md.
 contract GBPF is ERC20 {
-    /// @dev The only address authorised to mint and burn GBPF. Hardcoded at deploy.
-    address public immutable HOOK;
+    /// @dev The only address authorised to mint and burn GBPF. Set once via initialize().
+    address public HOOK;
 
     error NotHook();
     error MintToZeroAddress();
+    error AlreadyInitialized();
+    error ZeroHook();
+    error NotInitialized();
 
-    constructor(address hook_) {
+    /// @notice One-shot setter for the Hook address. After this call, HOOK is fixed forever.
+    /// @dev    Reverts if called twice or with the zero address.
+    function initialize(address hook_) external {
+        if (HOOK != address(0)) revert AlreadyInitialized();
+        if (hook_ == address(0)) revert ZeroHook();
         HOOK = hook_;
     }
 
@@ -34,6 +45,7 @@ contract GBPF is ERC20 {
     ///      has been deposited into the vault. Solady's _mint allows minting to address(0)
     ///      (the resulting tokens would be unrecoverable); we add an explicit guard.
     function mint(address to, uint256 amount) external {
+        if (HOOK == address(0)) revert NotInitialized();
         if (msg.sender != HOOK) revert NotHook();
         if (to == address(0)) revert MintToZeroAddress();
         _mint(to, amount);
@@ -48,6 +60,7 @@ contract GBPF is ERC20 {
     ///      already moves the user's GBPF into the hook's possession as part of the swap
     ///      itself.
     function burn(uint256 amount) external {
+        if (HOOK == address(0)) revert NotInitialized();
         if (msg.sender != HOOK) revert NotHook();
         _burn(msg.sender, amount);
     }

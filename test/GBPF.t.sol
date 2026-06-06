@@ -15,7 +15,8 @@ contract GBPFTest is Test {
         hook = makeAddr("hook");
         alice = makeAddr("alice");
         bob = makeAddr("bob");
-        token = new GBPF(hook);
+        token = new GBPF();
+        token.initialize(hook);
     }
 
     // ============================================================
@@ -40,6 +41,33 @@ contract GBPFTest is Test {
 
     function test_hook_address_immutable() public view {
         assertEq(token.HOOK(), hook);
+    }
+
+    // ============================================================
+    // initialize()
+    // ============================================================
+
+    function test_initialize_revertsOnSecondCall() public {
+        vm.expectRevert(GBPF.AlreadyInitialized.selector);
+        token.initialize(makeAddr("other"));
+    }
+
+    function test_initialize_revertsOnZeroAddress() public {
+        GBPF fresh = new GBPF();
+        vm.expectRevert(GBPF.ZeroHook.selector);
+        fresh.initialize(address(0));
+    }
+
+    function test_mint_revertsBeforeInitialize() public {
+        GBPF fresh = new GBPF();
+        vm.expectRevert(GBPF.NotInitialized.selector);
+        fresh.mint(alice, 1e18);
+    }
+
+    function test_burn_revertsBeforeInitialize() public {
+        GBPF fresh = new GBPF();
+        vm.expectRevert(GBPF.NotInitialized.selector);
+        fresh.burn(1e18);
     }
 
     // ============================================================
