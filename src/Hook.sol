@@ -117,16 +117,55 @@ contract Hook is IHooks {
     }
 
     // ============================================================================================
-    // IHooks: only beforeSwap is implemented. The other hook callbacks revert because the
-    // corresponding flags are not set on our address, so V4's PoolManager will never invoke them.
+    // IHooks callbacks
+    //
+    // Only beforeSwap is functional. The other callbacks revert InvalidHookCall as defence in
+    // depth — they will never be called in normal operation because the corresponding flag bits
+    // are not set in the hook's CREATE2-mined address, and V4's PoolManager only invokes a
+    // callback if the matching bit is set.
     // ============================================================================================
 
+    /// @notice V4 hook callback invoked before every swap against the (USDS, GBPF) pool.
+    ///         Fully replaces V4's pool math with an oracle-priced mint/redeem against the vault.
+    /// @dev    Verifies the caller is the PoolManager, the PoolKey matches the one bound at
+    ///         deploy, the amountSpecified is non-zero, and the oracle is healthy. Then computes
+    ///         solvency, gets the spread from SpreadCurve, dispatches to either _handleMint or
+    ///         _handleRedeem depending on `params.zeroForOne` and the USDS_IS_TOKEN0 immutable.
+    ///
+    ///         Both mint (USDS → GBPF) and redeem (GBPF → USDS) flows support exact-input
+    ///         (amountSpecified < 0) and exact-output (amountSpecified > 0). Exact-output
+    ///         inverts the linear price multiplier analytically; the curve itself is evaluated
+    ///         only once per swap from the pre-swap solvency.
+    ///
+    ///         All token movements are within this single call frame: tokens are pulled from
+    ///         the PoolManager via `take`, swapped via Spark PSM3, deposited to or withdrawn
+    ///         from the Vault, GBPF is minted to / burned from this contract, and the final
+    ///         payment back to the PoolManager is settled via `sync` + `transfer` + `settle`.
+    ///
+    /// @param  key            The PoolKey of the pool being swapped on. Must match the
+    ///                        committed POOL_KEY_HASH or the call reverts WrongPool.
+    /// @param  params         The swap parameters as supplied by the swapper.
+    /// @return selector       IHooks.beforeSwap.selector — required by V4 for callback validation.
+    /// @return delta          BeforeSwapDelta packed as (specifiedDelta, unspecifiedDelta).
+    ///                        The deltas tell the PoolManager that the hook has fully handled
+    ///                        the trade and the pool's own math should not run.
+    /// @return overrideFee    Always 0 — we do not use V4's dynamic LP fee mechanism.
+    ///
+    /// Reverts with:
+    /// - `NotPoolManager`    if msg.sender is not the configured PoolManager.
+    /// - `WrongPool`         if the PoolKey hash does not match POOL_KEY_HASH.
+    /// - `ZeroSwap`          if amountSpecified is zero, or if the computed input/output is
+    ///                        zero (e.g. dust amounts that round to zero through pricing).
+    /// - `OraclePaused`      if the OracleAdapter reports unhealthy (any pause trigger active).
+    /// - `InvalidHookCall`   if GBPF total supply is zero (an off-bootstrap invariant violation;
+    ///                        the protocol is bootstrapped to non-zero supply at deploy).
+    /// - `AmountTooLarge`    if a token amount exceeds int128 max (~1.7e38; far above any
+    ///                        realistic swap size).
     function beforeSwap(
-        address,
-        /* sender */
+        address, /* sender */
         PoolKey calldata key,
         SwapParams calldata params,
-        bytes calldata
+        bytes calldata /* hookData */
     )
         external
         returns (bytes4, BeforeSwapDelta, uint24)
@@ -163,14 +202,19 @@ contract Hook is IHooks {
         }
     }
 
+    /// @notice Unused; reverts as defence in depth. PoolManager will not call this because the
+    ///         BEFORE_INITIALIZE_FLAG bit is not set in this hook's address.
     function beforeInitialize(address, PoolKey calldata, uint160) external pure returns (bytes4) {
         revert InvalidHookCall();
     }
 
+    /// @notice Unused; reverts as defence in depth. See {beforeInitialize}.
     function afterInitialize(address, PoolKey calldata, uint160, int24) external pure returns (bytes4) {
         revert InvalidHookCall();
     }
 
+    /// @notice Unused; reverts as defence in depth. The protocol does not support adding LP
+    ///         positions to this pool — there are no LPs by design.
     function beforeAddLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
         external
         pure
@@ -179,6 +223,7 @@ contract Hook is IHooks {
         revert InvalidHookCall();
     }
 
+    /// @notice Unused; reverts as defence in depth. See {beforeAddLiquidity}.
     function afterAddLiquidity(
         address,
         PoolKey calldata,
@@ -190,6 +235,7 @@ contract Hook is IHooks {
         revert InvalidHookCall();
     }
 
+    /// @notice Unused; reverts as defence in depth. See {beforeAddLiquidity}.
     function beforeRemoveLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
         external
         pure
@@ -198,6 +244,7 @@ contract Hook is IHooks {
         revert InvalidHookCall();
     }
 
+    /// @notice Unused; reverts as defence in depth. See {beforeAddLiquidity}.
     function afterRemoveLiquidity(
         address,
         PoolKey calldata,
@@ -209,6 +256,7 @@ contract Hook is IHooks {
         revert InvalidHookCall();
     }
 
+    /// @notice Unused; reverts as defence in depth. All swap logic happens in {beforeSwap}.
     function afterSwap(address, PoolKey calldata, SwapParams calldata, BalanceDelta, bytes calldata)
         external
         pure
@@ -217,10 +265,12 @@ contract Hook is IHooks {
         revert InvalidHookCall();
     }
 
+    /// @notice Unused; reverts as defence in depth. The pool does not support donations.
     function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) {
         revert InvalidHookCall();
     }
 
+    /// @notice Unused; reverts as defence in depth. See {beforeDonate}.
     function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) {
         revert InvalidHookCall();
     }
@@ -229,7 +279,22 @@ contract Hook is IHooks {
     // Pricing
     // ============================================================================================
 
-    /// @dev s = (sUsdsBalance - pendingBeneficiary) * ssrRate / RAY / twapWad / gbpfSupply, in WAD.
+    /// @dev Compute the solvency ratio in WAD: collateral GBP-value divided by GBPF supply.
+    ///
+    ///      solvency = (sUsdsBalance - pendingBeneficiary)  // sUSDS principal
+    ///               × ssrRate / RAY                         // → USDS-value (WAD)
+    ///               × WAD / twapWad                         // → GBP-value (WAD)
+    ///               × WAD / gbpfSupply                      // → per-token solvency (WAD)
+    ///
+    ///      The principal subtracts pendingBeneficiary because that portion of the vault is
+    ///      owed to the beneficiary multisig and does not back GBPF holders.
+    ///
+    /// @param sUsdsBalance       Vault sUSDS balance, in 18-decimal sUSDS shares.
+    /// @param pendingBeneficiary sUSDS owed to the beneficiary, in 18-decimal shares.
+    /// @param ssrRate            Spark SSRAuthOracle's conversion rate, in ray (1e27).
+    /// @param twapWad            GBP/USD TWAP, in WAD (1e18).
+    /// @param gbpfSupply         GBPF.totalSupply(), in 18-decimal GBPF.
+    /// @return solvencyWad       Solvency in WAD. 1e18 == 100% solvency.
     function _computeSolvencyWad(
         uint256 sUsdsBalance,
         uint256 pendingBeneficiary,
@@ -275,6 +340,16 @@ contract Hook is IHooks {
     // Mint flow
     // ============================================================================================
 
+    /// @dev Execute a mint swap (USDS → GBPF). Pull USDS from PoolManager, convert to sUSDS via
+    ///      Spark PSM3 (delivered straight to the vault), record the deposit with the protocol
+    ///      fee separated out, mint GBPF to this contract, push GBPF to PoolManager via
+    ///      sync/transfer/settle, and return the BeforeSwapDelta describing the trade.
+    ///
+    /// @param params      The original swap params from V4. Used for amountSpecified.
+    /// @param twapWad     GBP/USD TWAP read from the OracleAdapter, in WAD.
+    /// @param spreadWad   Signed spread from SpreadCurve evaluated at pre-swap solvency.
+    /// @param isExactInput true if amountSpecified < 0 (user supplies USDS amount),
+    ///                     false if amountSpecified > 0 (user requests GBPF amount).
     function _handleMint(SwapParams calldata params, uint256 twapWad, int256 spreadWad, bool isExactInput)
         internal
         returns (bytes4, BeforeSwapDelta, uint24)
@@ -357,6 +432,16 @@ contract Hook is IHooks {
     // Redeem flow
     // ============================================================================================
 
+    /// @dev Execute a redeem swap (GBPF → USDS). Pull GBPF from PoolManager, burn it,
+    ///      withdraw sUSDS from the vault (separating fee from principal), convert to USDS
+    ///      via Spark PSM3 using exactOut so the user receives exactly `usdsOut` USDS, push
+    ///      that USDS to PoolManager via sync/transfer/settle, and return the BeforeSwapDelta.
+    ///
+    /// @param params      The original swap params from V4.
+    /// @param twapWad     GBP/USD TWAP from the OracleAdapter, in WAD.
+    /// @param spreadWad   Signed spread from SpreadCurve evaluated at pre-swap solvency.
+    /// @param isExactInput true if amountSpecified < 0 (user supplies GBPF amount),
+    ///                     false if amountSpecified > 0 (user requests USDS amount).
     function _handleRedeem(SwapParams calldata params, uint256 twapWad, int256 spreadWad, bool isExactInput)
         internal
         returns (bytes4, BeforeSwapDelta, uint24)
