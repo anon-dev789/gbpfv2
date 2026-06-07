@@ -4,88 +4,95 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 
 import {Vault} from "../../src/Vault.sol";
+import {GBPF} from "../../src/GBPF.sol";
 import {MockSUsds} from "../mocks/MockSUsds.sol";
+import {MockUsds} from "../mocks/MockUsds.sol";
 import {MockSSRAuthOracle} from "../mocks/MockSSRAuthOracle.sol";
+import {MockPSM3} from "../mocks/MockPSM3.sol";
+import {MockPoolManager} from "../mocks/MockPoolManager.sol";
 
-/// @dev Handler the invariant runner pokes at random. Wraps the Vault's external surface and
-///      also drives the mocked sUSDS supply and chi index, simulating real protocol use:
-///      mints flowing in, redeems flowing out, yield accruing, and the beneficiary withdrawing.
+/// @dev Handler for the V4 6909-claim vault. Randomly drives recordMint, recordRedeem (requires
+///      sufficient principal — bounded accordingly), flush, settle, withdrawBeneficiary.
 contract VaultHandler is Test {
     uint256 internal constant RAY = 1e27;
 
     Vault public vault;
+    GBPF public gbpf;
     MockSUsds public sUsds;
+    MockUsds public usds;
     MockSSRAuthOracle public oracle;
+    MockPSM3 public psm;
+    MockPoolManager public pm;
     address public hook;
     address public beneficiary;
 
-    // ghost variables — accumulators independent of the contract storage, used by invariants
-    // to derive expected vs actual quantities. Inflows track what user-facing code put in;
-    // outflows track what user-facing code paid out (to redeemer + to beneficiary).
-    uint256 public ghostMintInflow;
-    uint256 public ghostRedeemOutflow;
+    uint256 public ghostUsdsClaimed;
+    uint256 public ghostGbpfClaimed;
     uint256 public ghostBeneficiaryWithdrawn;
-    uint256 public ghostYieldMinted; // sUSDS the handler synthesised to simulate yield
 
-    constructor(Vault v, MockSUsds s, MockSSRAuthOracle o, address h, address b) {
+    constructor(
+        Vault v,
+        GBPF g,
+        MockSUsds s,
+        MockUsds u,
+        MockSSRAuthOracle o,
+        MockPSM3 p,
+        MockPoolManager m,
+        address h,
+        address b
+    ) {
         vault = v;
+        gbpf = g;
         sUsds = s;
+        usds = u;
         oracle = o;
+        psm = p;
+        pm = m;
         hook = h;
         beneficiary = b;
     }
 
-    // ------------------------------------------------------------
-    // Handler actions
-    // ------------------------------------------------------------
-
-    /// Simulate a mint: sUSDS arrives at the vault, then the hook calls deposit().
-    function handle_deposit(uint96 amount, uint96 fee) external {
+    function handle_recordMint(uint96 amount, uint96 fee) external {
         uint256 a = bound(amount, 1, 1e30);
         uint256 f = bound(fee, 0, a);
-        sUsds.mint(address(vault), a);
-        ghostMintInflow += a;
+        // Mirror the V4 flow: PM credits the vault with a 6909 claim and is pre-funded with the
+        // real USDS that the eventual flush() will take.
+        pm.mintClaim(address(vault), uint256(uint160(address(usds))), a);
+        pm.fund(address(usds), a);
         vm.prank(hook);
-        try vault.deposit(a, f) {} catch {}
-    }
-
-    /// Simulate a redeem: hook calls withdraw(), vault pays out sUSDS to a recipient.
-    function handle_withdraw(uint96 amount, uint96 fee, address to) external {
-        if (to == address(0) || to == address(vault) || to == beneficiary) {
-            // skip zero / vault-self / beneficiary to keep ghost accounting clean
-            return;
-        }
-        uint256 a = bound(amount, 1, type(uint96).max);
-        uint256 f = bound(fee, 0, a);
-        vm.prank(hook);
-        try vault.withdraw(a, to, f) {
-            ghostRedeemOutflow += a;
+        try vault.recordMint(a, f) {
+            ghostUsdsClaimed += a;
         } catch {}
     }
 
-    /// Simulate sUSDS yield: bump chi a little, and mint a corresponding amount of sUSDS
-    /// into the vault so the share-price model and the on-chain balance stay consistent.
-    /// Without this, chi grows but the vault's sUSDS balance doesn't — which is the unrealistic
-    /// regime that produced the fuzz failure earlier; bounding it here keeps the simulation
-    /// faithful to the real Spark oracle behaviour where sUSDS appreciates against USDS but
-    /// the share count stays constant.
-    ///
-    /// NOTE: in production, chi growth represents USDS-value appreciation of an unchanged sUSDS
-    ///       share count. We therefore *do not* mint extra sUSDS here; we only advance chi.
-    ///       The vault's accounting must be correct under this exact regime.
-    function handle_advance_chi(uint16 bumpBps) external {
-        uint256 bps = bound(bumpBps, 0, 1000); // up to 10% per tick
-        if (bps == 0) return;
-        uint256 current = oracle.getChi();
-        oracle.setChi(current + (current * bps / 10_000));
+    function handle_recordRedeem(uint96 sUsdsAmt, uint96 gbpfAmt, uint96 feeAmt) external {
+        uint256 s = bound(sUsdsAmt, 1, 1e30);
+        uint256 g = bound(gbpfAmt, 1, 1e30);
+        uint256 f = bound(feeAmt, 0, s);
+        // Pre-fund the PM with the GBPF that flush will take + credit a 6909 claim to the vault.
+        pm.mintClaim(address(vault), uint256(uint160(address(gbpf))), g);
+        pm.fund(address(gbpf), g);
+        vm.prank(hook);
+        try vault.recordRedeem(s, g, f) {
+            ghostGbpfClaimed += g;
+        } catch {}
     }
 
-    /// Permissionless settle.
+    function handle_flush() external {
+        try vault.flush() {} catch {}
+    }
+
+    function handle_advance_chi(uint16 bumpBps) external {
+        uint256 bps = bound(bumpBps, 0, 1000);
+        if (bps == 0) return;
+        uint256 current = oracle.conversionRate();
+        oracle.setConversionRate(current + (current * bps / 10_000));
+    }
+
     function handle_settle() external {
         try vault.settle() {} catch {}
     }
 
-    /// Permissionless beneficiary withdrawal.
     function handle_withdrawBeneficiary() external {
         uint256 before = sUsds.balanceOf(beneficiary);
         try vault.withdrawBeneficiary() {
@@ -99,8 +106,12 @@ contract VaultInvariantsTest is Test {
 
     VaultHandler internal handler;
     Vault internal vault;
+    GBPF internal gbpf;
     MockSUsds internal sUsds;
+    MockUsds internal usds;
     MockSSRAuthOracle internal oracle;
+    MockPSM3 internal psm;
+    MockPoolManager internal pm;
     address internal hook;
     address internal beneficiary;
 
@@ -109,24 +120,29 @@ contract VaultInvariantsTest is Test {
         beneficiary = makeAddr("beneficiary");
 
         sUsds = new MockSUsds();
+        usds = new MockUsds();
         oracle = new MockSSRAuthOracle(RAY);
-        vault = new Vault(beneficiary, address(sUsds), address(oracle));
+        psm = new MockPSM3(address(usds), address(sUsds), RAY);
+        pm = new MockPoolManager();
+        gbpf = new GBPF();
+
+        vault = new Vault(
+            beneficiary, address(sUsds), address(usds), address(gbpf), address(oracle), address(psm), address(pm)
+        );
         vault.initialize(hook);
+        gbpf.initialize(hook, address(vault));
 
-        handler = new VaultHandler(vault, sUsds, oracle, hook, beneficiary);
-
-        // Restrict campaign to the handler. Forge's invariant runner won't poke the vault
-        // directly (it would just hit NotHook on every call), it'll only call the handler.
+        handler = new VaultHandler(vault, gbpf, sUsds, usds, oracle, psm, pm, hook, beneficiary);
         targetContract(address(handler));
     }
 
     // ============================================================================================
-    // Core invariants
+    // Invariants
     // ============================================================================================
 
-    /// The pending beneficiary share must never exceed what the vault actually holds.
-    /// If it does, withdrawBeneficiary() would underflow on transfer.
-    function invariant_pending_never_exceeds_balance() public view {
+    /// pendingBeneficiarySUsds must never exceed the vault's sUSDS balance — would underflow on
+    /// withdrawBeneficiary's transfer.
+    function invariant_pending_never_exceeds_sUsdsBalance() public view {
         assertLe(
             vault.pendingBeneficiarySUsds(),
             sUsds.balanceOf(address(vault)),
@@ -134,21 +150,27 @@ contract VaultInvariantsTest is Test {
         );
     }
 
-    /// lastSettledChi must be monotonically non-decreasing.
-    /// Implemented as a comparison against the live oracle chi after settle has rolled forward.
-    /// (The handler never makes chi go backward; this guards against an internal regression.)
-    function invariant_lastSettledChi_never_exceeds_oracle() public view {
-        assertLe(vault.lastSettledChi(), oracle.getChi(), "lastSettledChi ran ahead of oracle chi");
+    /// pendingBeneficiaryUsdsClaim must never exceed pendingUsdsClaim — fee portion of claims
+    /// can't exceed total claims.
+    function invariant_beneficiary_claim_within_total_claim() public view {
+        assertLe(
+            vault.pendingBeneficiaryUsdsClaim(),
+            vault.pendingUsdsClaim(),
+            "beneficiary USDS-claim fee > total USDS claim"
+        );
     }
 
-    /// Conservation: every sUSDS share the handler put into the vault either still lives in
-    /// the vault, or was paid out to a redeemer, or was paid out to the beneficiary.
-    /// (No yield was synthesised — chi-only growth is value appreciation, not share creation.)
-    function invariant_conservation_of_sUsds_shares() public view {
-        uint256 inflow = handler.ghostMintInflow();
-        uint256 outflow = handler.ghostRedeemOutflow() + handler.ghostBeneficiaryWithdrawn();
+    /// lastSettledChi never runs ahead of oracle chi.
+    function invariant_lastSettledChi_never_exceeds_oracle() public view {
+        assertLe(vault.lastSettledChi(), oracle.conversionRate(), "lastSettledChi ahead of oracle");
+    }
+
+    /// principalSUsds + pendingBeneficiarySUsds <= sUsds.balanceOf(vault). After every state-changing
+    /// vault call, post-settle the equation is exact; pre-settle it can be exact or slightly under
+    /// (yet-to-credit yield). Either way, the sum cannot exceed the actual balance.
+    function invariant_sUsds_accounting_within_balance() public view {
         uint256 inVault = sUsds.balanceOf(address(vault));
-        // inflow == in_vault + outflow
-        assertEq(inflow, inVault + outflow, "sUSDS share conservation violated");
+        uint256 total = vault.principalSUsds() + vault.pendingBeneficiarySUsds();
+        assertLe(total, inVault, "sUSDS accounting exceeds vault balance");
     }
 }

@@ -179,14 +179,15 @@ contract Hook is IHooks {
         if (!healthy) revert OraclePaused();
 
         // 2. Settle vault yield and read solvency inputs.
-        (uint256 sUsdsBalance, uint256 pendingBeneficiary, uint256 ssrRate) = VAULT.solvencyInputs();
+        (uint256 sUsdsBalance, uint256 pendingBeneficiary, uint256 ssrRate, uint256 usdsClaimBacking) =
+            VAULT.solvencyInputs();
 
-        // 3. Compute solvency. principal sUSDS × ray rate / twap / supply, all in WAD.
-        //    GBPF supply at deploy is bootstrapped to non-zero ($1 seed), so totalSupply > 0
-        //    is an invariant; we still defensively guard.
+        // 3. Compute solvency. principal sUSDS × ray rate / twap / supply + USDS claim backing / twap,
+        //    all in WAD. GBPF supply at deploy is bootstrapped to non-zero ($1 seed).
         uint256 gbpfSupply = GBPF_TOKEN.totalSupply();
         if (gbpfSupply == 0) revert InvalidHookCall();
-        uint256 solvencyWad = _computeSolvencyWad(sUsdsBalance, pendingBeneficiary, ssrRate, twapWad, gbpfSupply);
+        uint256 solvencyWad =
+            _computeSolvencyWad(sUsdsBalance, pendingBeneficiary, ssrRate, usdsClaimBacking, twapWad, gbpfSupply);
 
         // 4. Get the spread.
         int256 spreadWad = SpreadCurve.spread(solvencyWad);
@@ -279,19 +280,16 @@ contract Hook is IHooks {
     // Pricing
     // ============================================================================================
 
-    /// @dev Compute the solvency ratio in WAD: collateral GBP-value divided by GBPF supply.
-    ///
-    ///      solvency = (sUsdsBalance - pendingBeneficiary)  // sUSDS principal
-    ///               × ssrRate / RAY                         // → USDS-value (WAD)
-    ///               × WAD / twapWad                         // → GBP-value (WAD)
-    ///               × WAD / gbpfSupply                      // → per-token solvency (WAD)
-    ///
-    ///      The principal subtracts pendingBeneficiary because that portion of the vault is
-    ///      owed to the beneficiary multisig and does not back GBPF holders.
+    /// @dev Compute the solvency ratio in WAD. Backing comes from two sources:
+    ///        (a) sUSDS principal in the vault, converted to USDS-value via the SSR rate;
+    ///        (b) USDS-denominated 6909 claims the Vault holds on the PoolManager, awaiting
+    ///            flush. These are real USDS obligations on PM and count at 1:1 USDS-value.
+    ///      Combined USDS-value is divided by twap to get GBP-value, then by GBPF supply.
     ///
     /// @param sUsdsBalance       Vault sUSDS balance, in 18-decimal sUSDS shares.
     /// @param pendingBeneficiary sUSDS owed to the beneficiary, in 18-decimal shares.
-    /// @param ssrRate            Spark SSRAuthOracle's conversion rate, in ray (1e27).
+    /// @param ssrRate            Spark SSRAuthOracle conversion rate, in ray (1e27).
+    /// @param usdsClaimBacking   USDS-denominated 6909 claims backing GBPF (already net of beneficiary).
     /// @param twapWad            GBP/USD TWAP, in WAD (1e18).
     /// @param gbpfSupply         GBPF.totalSupply(), in 18-decimal GBPF.
     /// @return solvencyWad       Solvency in WAD. 1e18 == 100% solvency.
@@ -299,16 +297,14 @@ contract Hook is IHooks {
         uint256 sUsdsBalance,
         uint256 pendingBeneficiary,
         uint256 ssrRate,
+        uint256 usdsClaimBacking,
         uint256 twapWad,
         uint256 gbpfSupply
     ) internal pure returns (uint256) {
         uint256 principal = sUsdsBalance > pendingBeneficiary ? sUsdsBalance - pendingBeneficiary : 0;
-        // collateralUsdsWad = principal (in sUSDS shares, 18 decimals) * ssrRate / RAY
-        // = USDS-value of the principal in WAD.
-        uint256 collateralUsdsWad = FixedPointMathLib.mulDiv(principal, ssrRate, RAY);
-        // collateralGbpWad = collateralUsdsWad / twap (USDS-per-GBP)
-        uint256 collateralGbpWad = FixedPointMathLib.mulDiv(collateralUsdsWad, WAD, twapWad);
-        // s = collateralGbpWad / gbpfSupply
+        uint256 sUsdsUsdsValue = FixedPointMathLib.mulDiv(principal, ssrRate, RAY);
+        uint256 totalUsdsValue = sUsdsUsdsValue + usdsClaimBacking;
+        uint256 collateralGbpWad = FixedPointMathLib.mulDiv(totalUsdsValue, WAD, twapWad);
         return FixedPointMathLib.mulDiv(collateralGbpWad, WAD, gbpfSupply);
     }
 
@@ -360,44 +356,27 @@ contract Hook is IHooks {
 
         if (isExactInput) {
             usdsIn = uint256(-params.amountSpecified);
-            // gbpfOut = usdsIn * WAD / mintPriceUsdsPerGbpf  (round down — protocol-safe)
             gbpfOut = FixedPointMathLib.mulDiv(usdsIn, WAD, mintPriceWad);
         } else {
             gbpfOut = uint256(params.amountSpecified);
-            // usdsIn = ceilDiv(gbpfOut * mintPriceWad, WAD) — round up so the user pays enough.
             usdsIn = FixedPointMathLib.mulDivUp(gbpfOut, mintPriceWad, WAD);
         }
         if (usdsIn == 0 || gbpfOut == 0) revert ZeroSwap();
 
-        // Fee in USDS terms (proportional): feeUsds = usdsIn * flatFee / mintMultiplier.
-        // Equivalent simpler form: feeUsds = usdsIn * flatFee / (WAD + spread + flatFee)
-        // = usdsIn * flatFee * WAD / (mintPriceWad * WAD / twapWad)
-        // We compute it directly to avoid recomputing the multiplier:
-        // feeUsds = usdsIn * flatFee / mintMultiplier, where mintMultiplier = mintPriceWad / twapWad.
-        // i.e. feeUsds = usdsIn * flatFee * twap / mintPriceWad.
+        // Fee in USDS terms (proportional): feeUsds = usdsIn * flatFee * twap / mintPriceWad.
         uint256 feeUsds = FixedPointMathLib.mulDiv(usdsIn, FLAT_FEE_WAD * twapWad / WAD, mintPriceWad);
-        // Defensive clamp: feeUsds must not exceed usdsIn (it's a portion of it).
         if (feeUsds > usdsIn) feeUsds = usdsIn;
 
         // Token plumbing.
-        Currency usdsC = Currency.wrap(USDS);
+        // 1. PM.mint(VAULT, USDS_id, usdsIn): credit the Vault a 6909 USDS claim, debit the hook
+        //    by usdsIn USDS delta. The router's post-swap settle from user → PM will pay this debt.
+        // 2. Vault records the claim + fee.
+        // 3. Mint GBPF to self, sync + transfer + settle to PM (so PM owes user the GBPF).
+        uint256 usdsId = uint256(uint160(USDS));
+        POOL_MANAGER.mint(address(VAULT), usdsId, usdsIn);
+        VAULT.recordMint(usdsIn, feeUsds);
+
         Currency gbpfC = Currency.wrap(address(GBPF_TOKEN));
-
-        // Pull USDS from PoolManager.
-        POOL_MANAGER.take(usdsC, address(this), usdsIn);
-
-        // Convert USDS → sUSDS via PSM3. Preview first so we can use the exact amount as
-        // minAmountOut — PSM and we use the same SSRAuthOracle, so preview agrees exactly.
-        uint256 sUsdsExpected = PSM3.previewSwapExactIn(USDS, SUSDS, usdsIn);
-        uint256 sUsdsReceived = PSM3.swapExactIn(USDS, SUSDS, usdsIn, sUsdsExpected, address(VAULT), 0);
-
-        // Compute the sUSDS-denominated fee proportional to the USDS-denominated fee.
-        uint256 feeSUsds = FixedPointMathLib.mulDiv(sUsdsReceived, feeUsds, usdsIn);
-
-        // Record the deposit and the fee credit.
-        VAULT.deposit(sUsdsReceived, feeSUsds);
-
-        // Mint GBPF to ourselves, then push to PoolManager via sync/transfer/settle.
         GBPF_TOKEN.mint(address(this), gbpfOut);
         POOL_MANAGER.sync(gbpfC);
         address(GBPF_TOKEN).safeTransfer(address(POOL_MANAGER), gbpfOut);
@@ -452,41 +431,37 @@ contract Hook is IHooks {
 
         if (isExactInput) {
             gbpfIn = uint256(-params.amountSpecified);
-            // usdsOut = gbpfIn * redeemPriceWad / WAD (round down)
             usdsOut = FixedPointMathLib.mulDiv(gbpfIn, redeemPriceWad, WAD);
         } else {
             usdsOut = uint256(params.amountSpecified);
-            // gbpfIn = ceilDiv(usdsOut * WAD, redeemPriceWad) — round up so the user burns enough.
             gbpfIn = FixedPointMathLib.mulDivUp(usdsOut, WAD, redeemPriceWad);
         }
         if (gbpfIn == 0 || usdsOut == 0) revert ZeroSwap();
 
-        // Fee in USDS terms: feeUsds = usdsOut * flatFee / redeemMultiplier
-        // = usdsOut * flatFee * twap / redeemPriceWad
-        // (the fee is the portion of the user's "should have got more" that we kept).
+        // Fee in USDS terms: feeUsds = usdsOut * flatFee * twap / redeemPriceWad.
         uint256 feeUsds = FixedPointMathLib.mulDiv(usdsOut, FLAT_FEE_WAD * twapWad / WAD, redeemPriceWad);
 
-        Currency usdsC = Currency.wrap(USDS);
-        Currency gbpfC = Currency.wrap(address(GBPF_TOKEN));
+        // 1. PM.mint(VAULT, GBPF_id, gbpfIn): credit Vault a 6909 GBPF claim, debit hook
+        //    gbpfIn GBPF. Router's post-swap settle from user → PM will pay this debt.
+        // 2. Vault.recordRedeem moves sUSDS from vault to hook (for PSM3 conversion) and
+        //    records the GBPF claim + sUSDS-fee credit.
+        // 3. Convert sUSDS → USDS via PSM3.swapExactOut, sending output to hook.
+        // 4. Hook syncs + transfers + settles USDS to PM (credits PM with USDS owed to user).
+        uint256 gbpfId = uint256(uint160(address(GBPF_TOKEN)));
+        POOL_MANAGER.mint(address(VAULT), gbpfId, gbpfIn);
 
-        // Pull GBPF from PoolManager and burn it.
-        POOL_MANAGER.take(gbpfC, address(this), gbpfIn);
-        GBPF_TOKEN.burn(gbpfIn);
-
-        // Ask the PSM how much sUSDS we need to deliver `usdsOut` USDS. Same oracle = exact agreement.
+        // Ask PSM3 how much sUSDS we need to deliver `usdsOut` USDS.
         uint256 sUsdsForUser = PSM3.previewSwapExactOut(SUSDS, USDS, usdsOut);
-
-        // Compute the sUSDS-denominated fee proportional to the USDS-denominated fee.
         uint256 feeSUsds = FixedPointMathLib.mulDiv(sUsdsForUser, feeUsds, usdsOut);
 
-        // Pull sUSDS from the vault: `sUsdsForUser` to us for the conversion, `feeSUsds` stays in
-        // the vault credited to pendingBeneficiarySUsds.
-        VAULT.withdraw(sUsdsForUser, address(this), feeSUsds);
+        // Vault transfers sUsdsForUser to this hook + records the GBPF claim and beneficiary fee.
+        VAULT.recordRedeem(sUsdsForUser, gbpfIn, feeSUsds);
 
-        // Convert sUSDS → USDS via PSM3, sending the output to us so we can settle to PM.
+        // Convert sUSDS → USDS via PSM3.
         PSM3.swapExactOut(SUSDS, USDS, usdsOut, sUsdsForUser, address(this), 0);
 
-        // Push USDS to PoolManager.
+        // Push USDS to PoolManager so PM can pay the user during router settle.
+        Currency usdsC = Currency.wrap(USDS);
         POOL_MANAGER.sync(usdsC);
         USDS.safeTransfer(address(POOL_MANAGER), usdsOut);
         POOL_MANAGER.settle();

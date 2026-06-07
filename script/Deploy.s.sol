@@ -100,8 +100,11 @@ contract Deploy is Script {
         GBPF gbpf = new GBPF();
         console2.log("GBPF deployed at", address(gbpf));
 
-        // 4. Deploy Vault (HOOK unset).
-        Vault vault = new Vault(beneficiary, SUSDS_TOKEN, SPARK_SSR_AUTH_ORACLE);
+        // 4. Deploy Vault (HOOK unset). Vault needs USDS, GBPF, PSM3, PoolManager because it
+        //    runs the deferred USDS→sUSDS conversion + GBPF burn during flush().
+        Vault vault = new Vault(
+            beneficiary, SUSDS_TOKEN, USDS_TOKEN, address(gbpf), SPARK_SSR_AUTH_ORACLE, SPARK_PSM3, V4_POOL_MANAGER
+        );
         console2.log("Vault deployed at", address(vault));
 
         // 5. Mine a CREATE2 salt for the Hook such that its address encodes the required flags.
@@ -127,7 +130,7 @@ contract Deploy is Script {
 
         // 7. Wire HOOK into Vault and GBPF (one-shot initialise; reverts on re-call).
         vault.initialize(address(hook));
-        gbpf.initialize(address(hook));
+        gbpf.initialize(address(hook), address(vault));
         console2.log("Vault and GBPF initialised with hook address");
 
         // 8. Seed-and-burn deferred. On mainnet, the operator runs the seed swap as a

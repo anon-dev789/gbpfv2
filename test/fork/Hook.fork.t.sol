@@ -146,11 +146,26 @@ contract HookForkTest is Test {
 
         // Deploy the router and seed the user with USDS so they can mint.
         router = new MinimalRouter(V4_POOL_MANAGER);
-        deal(USDS_TOKEN, user, 10_000e18);
+        _giveUsds(user, 10_000e18);
 
         // GBPF's constructor already minted 1 wei of dust to 0xDeaD, so gbpfSupply > 0 from
         // the moment of deploy. The first user mint via the Hook proceeds normally — no need
         // for a separate bootstrap seed step.
+    }
+
+    /// @dev Bridged USDS on Base uses Sky's Usds.sol. Foundry's `deal()` cheatcode probes for
+    ///      the balanceOf slot via a heuristic that picks the wrong slot on this contract.
+    ///      Rather than guessing the slot ourselves, just prank-transfer from a known whale.
+    ///      Spark PSM3 holds ~70M USDS on Base at the pinned fork block, so transferring out
+    ///      10k USDS is trivial.
+    address internal constant USDS_WHALE = 0x1601843c5E9bC251A3272907010AFa41Fa18347E;
+
+    function _giveUsds(address to, uint256 amount) internal {
+        require(IERC20Like(USDS_TOKEN).balanceOf(USDS_WHALE) >= amount, "whale doesn't have enough USDS");
+        vm.prank(USDS_WHALE);
+        // forge-lint: disable-next-line(erc20-unchecked-transfer)
+        IERC20Like(USDS_TOKEN).transfer(to, amount);
+        require(IERC20Like(USDS_TOKEN).balanceOf(to) >= amount, "whale transfer didn't land");
     }
 
     // ============================================================

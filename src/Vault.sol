@@ -3,7 +3,12 @@ pragma solidity 0.8.26;
 
 import {SafeTransferLib} from "solady/utils/SafeTransferLib.sol";
 
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {IUnlockCallback} from "@uniswap/v4-core/src/interfaces/callback/IUnlockCallback.sol";
+import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+
 import {ISSRAuthOracle} from "./interfaces/ISSRAuthOracle.sol";
+import {IPSM3} from "./interfaces/IPSM3.sol";
 
 /// @dev Minimal IERC20 surface used by the Vault. Only balanceOf is read directly;
 ///      transfers go through Solady's SafeTransferLib which uses its own low-level calls.
@@ -11,70 +16,95 @@ interface IERC20Balance {
     function balanceOf(address account) external view returns (uint256);
 }
 
+/// @dev Minimal interface for the GBPF token (only used by flush to burn redeem claims).
+interface IGBPFBurn {
+    function burn(uint256 amount) external;
+}
+
 /// @title GBPF collateral vault
-/// @notice Immutable sUSDS custody contract for the GBPF protocol.
+/// @notice Immutable sUSDS custody contract for the GBPF protocol with V4 6909 claim
+///         accounting and deferred PSM3 conversion.
 ///
-/// The Vault holds the protocol's sUSDS reserves and tracks the portion of those reserves owed
-/// to the beneficiary multisig (100% of mint/redeem flat fees + 50% of sUSDS yield). Everything
-/// else in the vault backs GBPF.
+/// The Vault holds sUSDS reserves plus tracks two pending counters that represent
+/// V4 PoolManager 6909 claims accumulated during mint/redeem swaps:
+///   - pendingUsdsClaim:        USDS-denominated 6909 claims from mints (input the Vault
+///                              owns on the PoolManager but hasn't yet converted to sUSDS).
+///   - pendingGbpfClaim:        GBPF-denominated 6909 claims from redeems (GBPF the protocol
+///                              has effectively absorbed and will burn on flush).
+/// Both are realised by a permissionless flush() that the keeper runs after swaps.
 ///
-/// The Vault is a pure custody contract: it does not read GBP/USD, does not know the GBPF supply,
-/// does not compute spreads, and does not mint/burn GBPF. The hook is responsible for all pricing
-/// math and for calling deposit() / withdraw() with the already-computed sUSDS amounts.
+/// During flush(), the Vault:
+///   1. Calls PoolManager.unlock with itself as the IUnlockCallback.
+///   2. Burns the 6909 USDS claim, takes the real USDS from PM, approves PSM3, converts to
+///      sUSDS, deposits to itself, credits the principal + beneficiary share.
+///   3. Burns the 6909 GBPF claim, takes the real GBPF from PM, calls GBPF.burn to destroy it.
 ///
-/// Yield-share accounting: the beneficiary's share grows continuously with the SSR oracle's chi
-/// index. _settleBeneficiaryYield() is invoked at the start of every state-changing function so
-/// the pending counter is always current before any flow.
-///
-/// Access control:
-/// - deposit / withdraw: HOOK only.
-/// - withdrawBeneficiary / settle: permissionless (anyone can trigger settlement and forward to BENEFICIARY).
-/// - No owner, no admin, no upgrade path, no selfdestruct, no delegatecall.
-contract Vault {
+/// Pending claims back GBPF at 1:1 USDS-value for solvency math (they're real obligations on
+/// PM that will resolve into USDS within one block of the keeper running flush).
+contract Vault is IUnlockCallback {
     using SafeTransferLib for address;
 
-    /// @dev The protocol hook that is authorised to deposit and withdraw collateral.
+    /// @dev The protocol hook that is authorised to record claims and direct payouts.
     ///      Set once via initialize() during deployment; cannot be changed thereafter.
-    ///      Not `immutable` because of the circular deploy dependency with Hook
-    ///      (Hook's constructor needs Vault's address; Vault needs Hook's address).
-    ///      See DEPLOY_DESIGN.md for the dependency analysis.
     address public HOOK;
 
-    /// @dev The hardcoded multisig that receives the beneficiary share. Fixed at deploy forever.
+    /// @dev The hardcoded multisig that receives the beneficiary share.
     address public immutable BENEFICIARY;
 
-    /// @dev Base sUSDS token (SkyLink-bridged). The only token this vault holds or transfers.
+    /// @dev Base sUSDS token (SkyLink-bridged).
     address public immutable SUSDS;
 
-    /// @dev Spark's SSRAuthOracle on Base. Source for the chi index used by yield accounting.
+    /// @dev Base USDS token (SkyLink-bridged).
+    address public immutable USDS;
+
+    /// @dev GBPF token (used by flush to burn redeem claims).
+    address public immutable GBPF_TOKEN;
+
+    /// @dev Spark's SSRAuthOracle on Base.
     ISSRAuthOracle public immutable SSR_ORACLE;
 
-    /// @dev Numerator portion of the beneficiary's yield share. With BENEFICIARY_YIELD_DENOM = 2,
-    ///      a numerator of 1 means 50% of yield to beneficiary. Immutable for life of protocol.
+    /// @dev Spark PSM3 on Base — converts USDS↔sUSDS at the same SSRAuthOracle rate, no fee.
+    IPSM3 public immutable PSM3;
+
+    /// @dev Uniswap V4 PoolManager — for unlock + burn + take in flush().
+    IPoolManager public immutable POOL_MANAGER;
+
+    /// @dev Beneficiary share numerator / denominator. 1/2 = 50% of yield to beneficiary.
     uint256 internal constant BENEFICIARY_YIELD_NUM = 1;
     uint256 internal constant BENEFICIARY_YIELD_DENOM = 2;
 
-    /// @dev Total sUSDS in the vault that is owed to BENEFICIARY (fees + accrued yield share).
-    ///      Must always be <= SUSDS.balanceOf(this).
+    /// @dev sUSDS owed to BENEFICIARY (already converted; includes flat fees + yield share).
     uint256 public pendingBeneficiarySUsds;
 
-    /// @dev sUSDS principal currently earning yield on behalf of the protocol. Increases on
-    ///      deposit (by sUsdsAmount - feeAmount), decreases on withdraw (by sUsdsAmount), is
-    ///      unaffected by passive chi growth or by accrued yield credits. This is the figure
-    ///      the yield-share formula multiplies against, *not* the live vault balance — the
-    ///      live balance can include sUSDS that has not yet "earned" any yield (e.g., a deposit
-    ///      that arrived in the same tx as a settlement).
+    /// @dev sUSDS principal currently earning yield for the protocol.
     uint256 public principalSUsds;
 
     /// @dev chi (in ray) at the most recent yield settlement. Monotonically non-decreasing.
     uint256 public lastSettledChi;
 
+    /// @dev V4 6909 USDS claim balance the Vault holds on the PoolManager — accumulated from
+    ///      mints. Realised into real USDS during flush.
+    uint256 public pendingUsdsClaim;
+
+    /// @dev USDS-denominated fee accumulated from mints + redeems, awaiting conversion to sUSDS
+    ///      and credit to pendingBeneficiarySUsds during flush.
+    uint256 public pendingBeneficiaryUsdsClaim;
+
+    /// @dev V4 6909 GBPF claim balance the Vault holds on PoolManager — accumulated from
+    ///      redeems. Realised into real GBPF and burned during flush.
+    uint256 public pendingGbpfClaim;
+
+    /// @dev Used by unlockCallback to disambiguate the callback purpose. The Vault is its own
+    ///      unlocker; this is a guard against external calls or misuse.
+    bool internal _unlocking;
+
     // ============================================================================================
     // Events
     // ============================================================================================
 
-    event Deposit(uint256 sUsdsAmount, uint256 feeAmount);
-    event Withdraw(address indexed to, uint256 sUsdsAmount, uint256 feeAmount);
+    event RecordMint(uint256 usdsClaim, uint256 feeUsds);
+    event RecordRedeem(address indexed to, uint256 sUsdsAmount, uint256 gbpfClaim, uint256 feeUsds);
+    event Flush(uint256 usdsClaimRealised, uint256 sUsdsMinted, uint256 gbpfBurned);
     event BeneficiaryWithdrawal(uint256 amount, uint256 settledChi);
     event YieldSettled(uint256 beneficiaryShareCredited, uint256 newChi);
 
@@ -83,6 +113,7 @@ contract Vault {
     // ============================================================================================
 
     error NotHook();
+    error NotPoolManager();
     error ZeroAmount();
     error InsufficientBackingForRedeem(uint256 requested, uint256 available);
     error NothingToWithdraw();
@@ -90,34 +121,38 @@ contract Vault {
     error AlreadyInitialized();
     error ZeroHook();
     error NotInitialized();
+    error NothingToFlush();
+    error ReentrantUnlock();
 
     // ============================================================================================
     // Construction
     // ============================================================================================
 
-    constructor(address beneficiary_, address sUsds_, address ssrOracle_) {
-        // BENEFICIARY, SUSDS, and SSR_ORACLE are set in the constructor and truly immutable.
-        // HOOK is set later via initialize() because of the circular deploy dependency: the
-        // Hook contract's address must encode V4 flag bits (CREATE2 mining), and its
-        // constructor takes the Vault address. So we deploy Vault first, then deploy Hook
-        // with Vault's address as a constructor arg, then call vault.initialize(hook).
+    constructor(
+        address beneficiary_,
+        address sUsds_,
+        address usds_,
+        address gbpfToken_,
+        address ssrOracle_,
+        address psm3_,
+        address poolManager_
+    ) {
         BENEFICIARY = beneficiary_;
         SUSDS = sUsds_;
+        USDS = usds_;
+        GBPF_TOKEN = gbpfToken_;
         SSR_ORACLE = ISSRAuthOracle(ssrOracle_);
+        PSM3 = IPSM3(psm3_);
+        POOL_MANAGER = IPoolManager(poolManager_);
 
-        // Seed the yield-share index. Any yield earned before this point is not credited to
-        // the beneficiary — which is correct because the vault held no protocol funds before
-        // it was deployed. We use getConversionRate() (the extrapolated chi) rather than
-        // getChi() (the stored chi) so the seed reflects the actual rate at deploy time, not
-        // the rate as of the last bridge update.
         lastSettledChi = ISSRAuthOracle(ssrOracle_).getConversionRate();
+
+        // Pre-approve PSM3 to pull USDS for the flush conversion. Done once at deploy.
+        usds_.safeApprove(psm3_, type(uint256).max);
     }
 
     /// @notice One-shot setter for the Hook address. Called by the deploy script after the Hook
     ///         is deployed at its mined CREATE2 address. After this call, HOOK is fixed forever.
-    /// @dev    Reverts if called twice or with the zero address. The first caller of this
-    ///         function effectively owns the Vault forever — the deploy script must call this
-    ///         atomically in the same transaction as Vault and Hook deployment.
     function initialize(address hook_) external {
         if (HOOK != address(0)) revert AlreadyInitialized();
         if (hook_ == address(0)) revert ZeroHook();
@@ -128,83 +163,85 @@ contract Vault {
     // Hook-only flows
     // ============================================================================================
 
-    /// @notice Record an incoming sUSDS deposit from a mint operation.
-    /// @param  sUsdsAmount  Total sUSDS that the hook has already transferred into this vault.
-    /// @param  feeAmount    Portion of sUsdsAmount that is the flat protocol fee, owed to BENEFICIARY.
-    ///                      Must be <= sUsdsAmount.
-    /// @dev The hook is responsible for transferring sUsdsAmount of sUSDS into this contract
-    ///      before calling deposit(). This function trusts that the transfer has occurred —
-    ///      it does not verify a balance change to avoid double-accounting in atomic flows
-    ///      where multiple internal calls happen in one transaction.
-    function deposit(uint256 sUsdsAmount, uint256 feeAmount) external {
+    /// @notice Record a mint swap. The Hook has just had PoolManager mint a 6909 USDS claim to
+    ///         this Vault for `usdsClaim`. We accumulate the claim and the fee portion.
+    ///         No real ERC20 movement here — that happens in flush.
+    /// @param  usdsClaim    USDS-denominated 6909 claim newly held by the Vault.
+    /// @param  feeUsds      Portion of usdsClaim that is the flat protocol fee (beneficiary's share).
+    function recordMint(uint256 usdsClaim, uint256 feeUsds) external {
         if (HOOK == address(0)) revert NotInitialized();
         if (msg.sender != HOOK) revert NotHook();
-        if (sUsdsAmount == 0) revert ZeroAmount();
-        // Defence-in-depth: even though the hook is the only caller, verify that the fee
-        // it's asking us to credit doesn't exceed the amount it just delivered. A bug in
-        // the hook that over-credits the beneficiary would silently shrink the vault's
-        // backing for GBPF; this check turns that bug into a revert.
-        if (feeAmount > sUsdsAmount) revert FeeExceedsAmount(feeAmount, sUsdsAmount);
+        if (usdsClaim == 0) revert ZeroAmount();
+        if (feeUsds > usdsClaim) revert FeeExceedsAmount(feeUsds, usdsClaim);
 
-        // Settle first, so the existing principalSUsds earns yield only up to the moment
-        // this deposit lands. The new (sUsdsAmount - feeAmount) is credited to principal
-        // *after* settlement and so does not retroactively earn yield it didn't accrue.
+        // Settle yield on the existing sUSDS principal before any new credits.
         _settleBeneficiaryYield();
 
-        if (feeAmount > 0) {
-            pendingBeneficiarySUsds += feeAmount;
+        pendingUsdsClaim += usdsClaim;
+        if (feeUsds > 0) {
+            pendingBeneficiaryUsdsClaim += feeUsds;
         }
-        principalSUsds += sUsdsAmount - feeAmount;
 
-        emit Deposit(sUsdsAmount, feeAmount);
+        emit RecordMint(usdsClaim, feeUsds);
     }
 
-    /// @notice Pay sUSDS out to a redeemer.
-    /// @param  sUsdsAmount  sUSDS to send to `to`. The hook has already computed this from the
-    ///                      oracle price and curve spread.
-    /// @param  to           Recipient (the redeeming user, typically).
-    /// @param  feeAmount    Flat protocol fee on this redeem, owed to BENEFICIARY. Remains in
-    ///                      the vault (it is sUSDS the user *did not* receive) and is added to
-    ///                      pendingBeneficiarySUsds.
-    function withdraw(uint256 sUsdsAmount, address to, uint256 feeAmount) external {
+    /// @notice Record a redeem swap. The Hook has just had PoolManager mint a 6909 GBPF claim
+    ///         to this Vault, and we must pay `sUsdsForUser` sUSDS to `to` (which the Hook will
+    ///         convert to USDS via PSM3 and settle to PoolManager). The Hook has also separated
+    ///         a feeSUsds portion of the vault's withdrawal that stays as beneficiary credit.
+    /// @param  sUsdsToHook       sUSDS to transfer to the Hook for PSM3 conversion to USDS.
+    /// @param  gbpfClaim         GBPF-denominated 6909 claim newly held by the Vault (to be burned in flush).
+    /// @param  feeSUsds          Beneficiary fee in sUSDS, credited to pendingBeneficiarySUsds (stays in vault).
+    function recordRedeem(uint256 sUsdsToHook, uint256 gbpfClaim, uint256 feeSUsds) external {
         if (HOOK == address(0)) revert NotInitialized();
         if (msg.sender != HOOK) revert NotHook();
-        if (sUsdsAmount == 0) revert ZeroAmount();
+        if (sUsdsToHook == 0 || gbpfClaim == 0) revert ZeroAmount();
 
         _settleBeneficiaryYield();
 
-        // After settlement, available backing is principalSUsds (the post-settlement quantity
-        // owed to GBPF holders). The redeem must fit BOTH the user payout and the new
-        // beneficiary credit inside the backing — otherwise we'd be promising the beneficiary
-        // more sUSDS than the vault holds.
+        // The redeem must fit BOTH the payout to the hook and the new beneficiary credit
+        // inside principalSUsds — otherwise we'd promise the beneficiary more than the vault holds.
         uint256 backing = principalSUsds;
-        uint256 total = sUsdsAmount + feeAmount;
+        uint256 total = sUsdsToHook + feeSUsds;
         if (total > backing) {
             revert InsufficientBackingForRedeem(total, backing);
         }
 
-        if (feeAmount > 0) {
-            pendingBeneficiarySUsds += feeAmount;
+        if (feeSUsds > 0) {
+            pendingBeneficiarySUsds += feeSUsds;
         }
         principalSUsds = backing - total;
+        pendingGbpfClaim += gbpfClaim;
 
-        SUSDS.safeTransfer(to, sUsdsAmount);
-        emit Withdraw(to, sUsdsAmount, feeAmount);
+        SUSDS.safeTransfer(HOOK, sUsdsToHook);
+        emit RecordRedeem(HOOK, sUsdsToHook, gbpfClaim, feeSUsds);
     }
 
     // ============================================================================================
     // Permissionless flows
     // ============================================================================================
 
-    /// @notice Advance the yield-share index without transferring anything. Useful for indexers
-    ///         and off-chain monitors that want an up-to-date pendingBeneficiarySUsds figure.
+    /// @notice Advance the yield-share index without transferring anything.
     function settle() external {
         _settleBeneficiaryYield();
     }
 
+    /// @notice Realise all pending 6909 claims and convert. Anyone can call.
+    ///         For each pending USDS claim: burn 6909, take real USDS, convert via PSM3 to sUSDS,
+    ///         deposit to the vault, credit principal and beneficiary share.
+    ///         For each pending GBPF claim: burn 6909, take real GBPF, burn the GBPF.
+    function flush() external {
+        if (pendingUsdsClaim == 0 && pendingGbpfClaim == 0) revert NothingToFlush();
+        if (_unlocking) revert ReentrantUnlock();
+
+        _settleBeneficiaryYield();
+
+        _unlocking = true;
+        POOL_MANAGER.unlock("");
+        _unlocking = false;
+    }
+
     /// @notice Send the beneficiary's accrued share to the hardcoded BENEFICIARY address.
-    ///         Permissionless — anyone can call, but funds always go to BENEFICIARY.
-    /// @dev Settles yield first so the most recent accruals are included.
     function withdrawBeneficiary() external {
         _settleBeneficiaryYield();
         uint256 amount = pendingBeneficiarySUsds;
@@ -215,111 +252,114 @@ contract Vault {
     }
 
     // ============================================================================================
+    // PoolManager unlock callback (called from flush)
+    // ============================================================================================
+
+    function unlockCallback(bytes calldata) external returns (bytes memory) {
+        if (msg.sender != address(POOL_MANAGER)) revert NotPoolManager();
+        if (!_unlocking) revert ReentrantUnlock();
+
+        uint256 usdsClaim = pendingUsdsClaim;
+        uint256 gbpfClaim = pendingGbpfClaim;
+        uint256 feeUsds = pendingBeneficiaryUsdsClaim;
+
+        // 1. Realise USDS claim.
+        uint256 sUsdsReceived;
+        if (usdsClaim > 0) {
+            uint256 usdsId = uint256(uint160(USDS));
+            POOL_MANAGER.burn(address(this), usdsId, usdsClaim);
+            POOL_MANAGER.take(Currency.wrap(USDS), address(this), usdsClaim);
+
+            // Convert all USDS to sUSDS in one go via PSM3.
+            uint256 minOut = PSM3.previewSwapExactIn(USDS, SUSDS, usdsClaim);
+            sUsdsReceived = PSM3.swapExactIn(USDS, SUSDS, usdsClaim, minOut, address(this), 0);
+
+            // Allocate to principal vs beneficiary share. We allocate by USDS proportion and
+            // convert to sUSDS shares at the same rate (proportional).
+            uint256 feeSUsds = sUsdsReceived * feeUsds / usdsClaim;
+            principalSUsds += sUsdsReceived - feeSUsds;
+            if (feeSUsds > 0) {
+                pendingBeneficiarySUsds += feeSUsds;
+            }
+
+            pendingUsdsClaim = 0;
+            pendingBeneficiaryUsdsClaim = 0;
+        }
+
+        // 2. Realise GBPF claim.
+        if (gbpfClaim > 0) {
+            uint256 gbpfId = uint256(uint160(GBPF_TOKEN));
+            POOL_MANAGER.burn(address(this), gbpfId, gbpfClaim);
+            POOL_MANAGER.take(Currency.wrap(GBPF_TOKEN), address(this), gbpfClaim);
+            IGBPFBurn(GBPF_TOKEN).burn(gbpfClaim);
+            pendingGbpfClaim = 0;
+        }
+
+        emit Flush(usdsClaim, sUsdsReceived, gbpfClaim);
+        return "";
+    }
+
+    // ============================================================================================
     // Views
     // ============================================================================================
 
-    /// @notice Returns the inputs the hook needs to compute solvency: vault sUSDS balance,
-    ///         pending beneficiary share, and the current SSR conversion rate (in ray).
-    /// @dev Settles yield first so the figures returned are always current. Not a view because
-    ///      of the settlement write. For off-chain reads that must not mutate state, use
-    ///      previewSolvencyInputs().
+    /// @notice Returns the inputs the hook needs to compute solvency.
+    /// @dev Settles yield first. `usdsClaimBacking` is the USDS-denominated 6909 claim balance
+    ///      that backs GBPF at 1:1 (no SSR multiplier — these are USDS, not sUSDS shares).
     function solvencyInputs()
         external
-        returns (uint256 sUsdsBalance, uint256 pendingBeneficiary, uint256 ssrConversionRate)
+        returns (uint256 sUsdsBalance, uint256 pendingBeneficiary, uint256 ssrConversionRate, uint256 usdsClaimBacking)
     {
         _settleBeneficiaryYield();
         sUsdsBalance = _vaultBalance();
         pendingBeneficiary = pendingBeneficiarySUsds;
         ssrConversionRate = SSR_ORACLE.getConversionRate();
+        // USDS claim backing is pending claim minus the beneficiary's portion.
+        uint256 claim = pendingUsdsClaim;
+        uint256 feeClaim = pendingBeneficiaryUsdsClaim;
+        usdsClaimBacking = claim > feeClaim ? claim - feeClaim : 0;
     }
 
-    /// @notice Same as solvencyInputs() but pure-view; computes what settlement *would* credit
-    ///         without writing. Useful for indexers, monitors, and off-chain pricing checks.
+    /// @notice View variant of solvencyInputs that does not mutate state.
     function previewSolvencyInputs()
         external
         view
-        returns (uint256 sUsdsBalance, uint256 pendingBeneficiary, uint256 ssrConversionRate)
+        returns (uint256 sUsdsBalance, uint256 pendingBeneficiary, uint256 ssrConversionRate, uint256 usdsClaimBacking)
     {
         sUsdsBalance = _vaultBalance();
         pendingBeneficiary = pendingBeneficiarySUsds + _previewBeneficiaryShare();
         ssrConversionRate = SSR_ORACLE.getConversionRate();
-    }
-
-    /// @notice Returns the current sUSDS available to back GBPF, accounting for *unsettled*
-    ///         yield (i.e., what principalSUsds would be after a hypothetical settle()).
-    ///         View-only; no state changes.
-    function backingBalance() external view returns (uint256) {
-        uint256 unsettled = _previewBeneficiaryShare();
-        uint256 p = principalSUsds;
-        return unsettled >= p ? 0 : p - unsettled;
+        uint256 claim = pendingUsdsClaim;
+        uint256 feeClaim = pendingBeneficiaryUsdsClaim;
+        usdsClaimBacking = claim > feeClaim ? claim - feeClaim : 0;
     }
 
     // ============================================================================================
     // Internal
     // ============================================================================================
 
-    /// @dev Credits accrued beneficiary yield to pendingBeneficiarySUsds, decrements the
-    ///      same amount from principalSUsds (the beneficiary's claim is no longer principal),
-    ///      and advances lastSettledChi.
-    ///
-    ///      Derivation. Let P = principalSUsds in sUSDS shares,
-    ///      chi_0 = lastSettledChi (USDS/share, in ray), chi_1 = currentChi.
-    ///      USDS yield earned on the principal between settlements: P * (chi_1 - chi_0) / RAY.
-    ///      Beneficiary's USDS claim (50%):                          P * (chi_1 - chi_0) / (2 * RAY).
-    ///      Converted back to sUSDS shares at the *new* rate:        P * (chi_1 - chi_0) / (2 * chi_1).
-    ///
-    ///      Hence: credit (in sUSDS shares) = P * chiDelta * NUM / (currentChi * DENOM).
-    ///
-    ///      Dividing by currentChi (not lastChi) is the correctness-critical part: the beneficiary
-    ///      receives the *current value* of their USDS claim expressed in shares, not an over-
-    ///      stated count that would arise from dividing by the smaller, older index.
-    ///
-    ///      Using principalSUsds (not vault balance minus pending) is also correctness-critical:
-    ///      newly-arrived deposits MUST NOT retroactively earn yield they did not accrue.
     function _settleBeneficiaryYield() internal {
-        // Use the extrapolated conversion rate, not the raw stored chi. Spark's getChi() only
-        // changes when the cross-chain bridge pushes a rate update (rare); the conversion rate
-        // ticks every block based on the last bridged SSR. Using getChi() would mean yield
-        // accrues to the beneficiary only in lumps at bridge messages instead of continuously.
         uint256 currentChi = SSR_ORACLE.getConversionRate();
         uint256 lastChi = lastSettledChi;
-
-        // If chi hasn't advanced (same block, or SSR=0, or oracle paused), nothing to credit.
-        // Defensive: also tolerate a chi that has somehow not increased — the invariant is
-        // monotonic non-decreasing, but we treat equal-or-less as a no-op to avoid underflow.
-        if (currentChi <= lastChi) {
-            return;
-        }
+        if (currentChi <= lastChi) return;
 
         uint256 principal = principalSUsds;
         if (principal == 0) {
-            // No working capital, so no yield to credit. Just roll the chi forward so the next
-            // deposit doesn't try to claim yield for the elapsed-but-empty interval.
             lastSettledChi = currentChi;
             return;
         }
 
         uint256 chiDelta = currentChi - lastChi;
-
-        // credit = P * chiDelta * NUM / (currentChi * DENOM), rounded down.
-        // currentChi is in ray (~10^27) so the denominator is large; P * chiDelta is bounded
-        // by P * currentChi (since chiDelta <= currentChi), which fits in uint256 for any
-        // realistic vault balance.
         uint256 credit = principal * chiDelta * BENEFICIARY_YIELD_NUM / (currentChi * BENEFICIARY_YIELD_DENOM);
 
         pendingBeneficiarySUsds += credit;
-        // The credited sUSDS is moved out of principal — it's no longer earning yield for the
-        // protocol's account, it's owed to the beneficiary.
         principalSUsds = principal - credit;
         lastSettledChi = currentChi;
 
         emit YieldSettled(credit, currentChi);
     }
 
-    /// @dev Read-only preview of how much yield would be credited if we settled right now.
-    ///      Uses the same formula as _settleBeneficiaryYield; see that function for the derivation.
     function _previewBeneficiaryShare() internal view returns (uint256) {
-        // See _settleBeneficiaryYield for why getConversionRate() rather than getChi().
         uint256 currentChi = SSR_ORACLE.getConversionRate();
         uint256 lastChi = lastSettledChi;
         if (currentChi <= lastChi) return 0;

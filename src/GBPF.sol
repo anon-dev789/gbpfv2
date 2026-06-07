@@ -15,8 +15,11 @@ import {ERC20} from "solady/tokens/ERC20.sol";
 ///      dependency: the Hook's CREATE2 address must encode V4 flag bits, and its constructor
 ///      takes the GBPF address. See DEPLOY_DESIGN.md.
 contract GBPF is ERC20 {
-    /// @dev The only address authorised to mint and burn GBPF. Set once via initialize().
+    /// @dev The only address authorised to mint GBPF. Set once via initialize().
     address public HOOK;
+
+    /// @dev Vault is also authorised to burn (during flush). Set once via initialize().
+    address public VAULT;
 
     /// @dev Standard "burn" address used to lock the dust mint forever.
     address internal constant DUST_BURN_ADDRESS = 0x000000000000000000000000000000000000dEaD;
@@ -30,9 +33,11 @@ contract GBPF is ERC20 {
     uint256 internal constant DUST_AMOUNT = 1;
 
     error NotHook();
+    error NotHookOrVault();
     error MintToZeroAddress();
     error AlreadyInitialized();
     error ZeroHook();
+    error ZeroVault();
     error NotInitialized();
 
     constructor() {
@@ -40,12 +45,15 @@ contract GBPF is ERC20 {
         _mint(DUST_BURN_ADDRESS, DUST_AMOUNT);
     }
 
-    /// @notice One-shot setter for the Hook address. After this call, HOOK is fixed forever.
-    /// @dev    Reverts if called twice or with the zero address.
-    function initialize(address hook_) external {
+    /// @notice One-shot setter for the Hook and Vault addresses. After this call, both are
+    ///         fixed forever.
+    /// @dev    Reverts if called twice or with the zero address for either.
+    function initialize(address hook_, address vault_) external {
         if (HOOK != address(0)) revert AlreadyInitialized();
         if (hook_ == address(0)) revert ZeroHook();
+        if (vault_ == address(0)) revert ZeroVault();
         HOOK = hook_;
+        VAULT = vault_;
     }
 
     function name() public pure override returns (string memory) {
@@ -67,17 +75,14 @@ contract GBPF is ERC20 {
         _mint(to, amount);
     }
 
-    /// @notice Burn GBPF from the hook's own balance. Hook-only.
-    /// @dev The hook calls this during a redeem swap, after the user's GBPF has been
-    ///      transferred to the hook by the Uniswap V4 PoolManager's settlement flow. The
-    ///      token contract enforces the balance check at the burn site (via _burn's
-    ///      underlying balance subtraction) — the hook cannot burn GBPF it doesn't hold.
-    ///      This avoids needing an allowance for the user→hook leg: V4's swap settlement
-    ///      already moves the user's GBPF into the hook's possession as part of the swap
-    ///      itself.
+    /// @notice Burn GBPF from msg.sender's balance. Callable only by HOOK or VAULT.
+    /// @dev The Hook used to be the only burner, calling burn during redeem after V4's swap
+    ///      settlement moved the user's GBPF to the hook. The V4 6909-claim refactor moved that
+    ///      logic into Vault.flush(), which now takes GBPF from PoolManager and burns it. So
+    ///      the burner role is shared between the two protocol contracts.
     function burn(uint256 amount) external {
         if (HOOK == address(0)) revert NotInitialized();
-        if (msg.sender != HOOK) revert NotHook();
+        if (msg.sender != HOOK && msg.sender != VAULT) revert NotHookOrVault();
         _burn(msg.sender, amount);
     }
 }

@@ -79,7 +79,7 @@ contract DeployForkTest is Test {
         vm.expectRevert(Vault.AlreadyInitialized.selector);
         Vault(d.vault).initialize(attacker);
         vm.expectRevert(GBPF.AlreadyInitialized.selector);
-        GBPF(d.gbpf).initialize(attacker);
+        GBPF(d.gbpf).initialize(attacker, attacker);
         vm.stopPrank();
     }
 

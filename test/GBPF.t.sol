@@ -16,7 +16,7 @@ contract GBPFTest is Test {
         alice = makeAddr("alice");
         bob = makeAddr("bob");
         token = new GBPF();
-        token.initialize(hook);
+        token.initialize(hook, makeAddr("vault"));
     }
 
     // ============================================================
@@ -52,13 +52,13 @@ contract GBPFTest is Test {
 
     function test_initialize_revertsOnSecondCall() public {
         vm.expectRevert(GBPF.AlreadyInitialized.selector);
-        token.initialize(makeAddr("other"));
+        token.initialize(makeAddr("other"), makeAddr("vault2"));
     }
 
     function test_initialize_revertsOnZeroAddress() public {
         GBPF fresh = new GBPF();
         vm.expectRevert(GBPF.ZeroHook.selector);
-        fresh.initialize(address(0));
+        fresh.initialize(address(0), makeAddr("vault3"));
     }
 
     function test_mint_revertsBeforeInitialize() public {
@@ -123,7 +123,7 @@ contract GBPFTest is Test {
         vm.prank(hook);
         token.mint(alice, 100e18);
         vm.prank(alice);
-        vm.expectRevert(GBPF.NotHook.selector);
+        vm.expectRevert(GBPF.NotHookOrVault.selector);
         token.burn(1e18);
     }
 

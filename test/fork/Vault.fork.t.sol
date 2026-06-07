@@ -6,20 +6,22 @@ import {Test} from "forge-std/Test.sol";
 import {Vault} from "../../src/Vault.sol";
 import {ISSRAuthOracle} from "../../src/interfaces/ISSRAuthOracle.sol";
 
-/// @dev Verifies the Vault works against the real Spark SSRAuthOracle on Base.
-///
-///      Run with:
-///        forge test --match-contract VaultForkTest -vv
+/// @dev Verifies the Vault constructor and yield read against the real Spark SSRAuthOracle on Base.
+///      Full mint/redeem/flush flows are covered by Hook.fork.t.sol (which exercises the real
+///      PoolManager); this suite is just the Vault-in-isolation against real Spark state.
 contract VaultForkTest is Test {
     uint256 internal constant BASE_FORK_BLOCK = 46_700_000;
 
     address internal constant SPARK_SSR_AUTH_ORACLE = 0x65d946e533748A998B1f0E430803e39A6388f7a1;
     address internal constant SUSDS_TOKEN = 0x5875eEE11Cf8398102FdAd704C9E96607675467a;
+    address internal constant USDS_TOKEN = 0x820C137fa70C8691f0e44Dc420a5e53c168921Dc;
+    address internal constant SPARK_PSM3 = 0x1601843c5E9bC251A3272907010AFa41Fa18347E;
+    address internal constant V4_POOL_MANAGER = 0x498581fF718922c3f8e6A244956aF099B2652b2b;
 
     Vault internal vault;
     address internal hook;
     address internal beneficiary;
-    address internal sUsdsWhale;
+    address internal gbpfPlaceholder;
 
     function setUp() public {
         string memory rpc = vm.envOr("BASE_RPC_URL", string("https://mainnet.base.org"));
@@ -27,22 +29,16 @@ contract VaultForkTest is Test {
 
         hook = makeAddr("hook");
         beneficiary = makeAddr("beneficiary");
+        gbpfPlaceholder = makeAddr("gbpf-placeholder");
 
-        vault = new Vault(beneficiary, SUSDS_TOKEN, SPARK_SSR_AUTH_ORACLE);
+        vault = new Vault(
+            beneficiary, SUSDS_TOKEN, USDS_TOKEN, gbpfPlaceholder, SPARK_SSR_AUTH_ORACLE, SPARK_PSM3, V4_POOL_MANAGER
+        );
         vault.initialize(hook);
-
-        // We need some sUSDS to deposit. Use vm.deal-equivalent for ERC20: deal cheatcode.
-        sUsdsWhale = makeAddr("whale");
-        deal(SUSDS_TOKEN, sUsdsWhale, 1000e18);
     }
-
-    // ============================================================================================
-    // Constructor seeded from real chi
-    // ============================================================================================
 
     function test_constructor_seeds_lastSettledChi_from_real_oracle() public view {
         // Vault seeds from getConversionRate() (extrapolated chi), NOT getChi() (stored chi).
-        // See ISSRAuthOracle interface for the difference and Vault.sol constructor for the why.
         uint256 expected = ISSRAuthOracle(SPARK_SSR_AUTH_ORACLE).getConversionRate();
         assertEq(vault.lastSettledChi(), expected);
         // Sanity: at this fork block, the conversion rate should be > 1 ray (sUSDS > USDS).
@@ -51,78 +47,29 @@ contract VaultForkTest is Test {
         assertGe(vault.lastSettledChi(), ISSRAuthOracle(SPARK_SSR_AUTH_ORACLE).getChi());
     }
 
-    // ============================================================================================
-    // Deposit + yield settlement against real oracle
-    // ============================================================================================
-
-    function test_deposit_against_real_susds() public {
-        // Whale transfers sUSDS to the vault, then the hook calls deposit().
-        vm.prank(sUsdsWhale);
-        (bool ok,) = SUSDS_TOKEN.call(abi.encodeWithSignature("transfer(address,uint256)", address(vault), 100e18));
-        assertTrue(ok, "sUSDS transfer to vault failed");
-
-        vm.prank(hook);
-        vault.deposit(100e18, 1e18); // 1 sUSDS fee
-
-        assertEq(vault.pendingBeneficiarySUsds(), 1e18);
-        assertEq(vault.principalSUsds(), 99e18);
+    function test_constructor_max_approves_psm_for_usds() public view {
+        (bool ok, bytes memory data) =
+            USDS_TOKEN.staticcall(abi.encodeWithSignature("allowance(address,address)", address(vault), SPARK_PSM3));
+        assertTrue(ok, "allowance() call failed");
+        assertEq(abi.decode(data, (uint256)), type(uint256).max, "USDS->PSM3 max approval missing");
     }
 
     function test_yield_accrues_against_real_oracle() public {
-        // Deposit, warp forward a meaningful amount of time, settle, expect a positive credit.
-        vm.prank(sUsdsWhale);
-        (bool ok,) = SUSDS_TOKEN.call(abi.encodeWithSignature("transfer(address,uint256)", address(vault), 1000e18));
-        assertTrue(ok);
-
-        vm.prank(hook);
-        vault.deposit(1000e18, 0);
-
+        // No principal seeded, but settle should advance lastSettledChi anyway.
         uint256 chiBefore = vault.lastSettledChi();
-        // Advance ~30 days. The oracle extrapolates chi forward locally using ssr × elapsed,
-        // so we should observe a non-zero credit on settle.
         vm.warp(block.timestamp + 30 days);
-
         vault.settle();
-
         uint256 chiAfter = vault.lastSettledChi();
         assertGt(chiAfter, chiBefore, "chi did not advance after 30 days");
-
-        uint256 pending = vault.pendingBeneficiarySUsds();
-        assertGt(pending, 0, "no yield credited to beneficiary after 30 days");
-        // Sanity bound: at 6% APY, 30 days on 1000e18 principal = ~5e18 USDS. Half to
-        // beneficiary = ~2.5e18 (less, due to share-vs-USDS conversion at the new chi).
-        // Allow generous bounds.
-        assertLt(pending, 10e18, "yield credit implausibly large");
+        // No principal => no beneficiary credit.
+        assertEq(vault.pendingBeneficiarySUsds(), 0);
     }
 
     function test_solvencyInputs_against_real_oracle() public {
-        vm.prank(sUsdsWhale);
-        (bool ok,) = SUSDS_TOKEN.call(abi.encodeWithSignature("transfer(address,uint256)", address(vault), 100e18));
-        assertTrue(ok);
-        vm.prank(hook);
-        vault.deposit(100e18, 0);
-
-        (uint256 bal, uint256 pending, uint256 rate) = vault.solvencyInputs();
-        assertEq(bal, 100e18, "vault balance != deposited");
-        assertEq(pending, 0, "pending non-zero before time has passed");
+        (uint256 bal, uint256 pending, uint256 rate, uint256 claimBacking) = vault.solvencyInputs();
+        assertEq(bal, 0, "vault balance non-zero at empty start");
+        assertEq(pending, 0);
         assertGt(rate, 1e27, "ssr rate <= 1 ray");
-    }
-
-    function test_withdraw_against_real_susds() public {
-        vm.prank(sUsdsWhale);
-        (bool ok,) = SUSDS_TOKEN.call(abi.encodeWithSignature("transfer(address,uint256)", address(vault), 100e18));
-        assertTrue(ok);
-
-        vm.prank(hook);
-        vault.deposit(100e18, 0);
-
-        address user = makeAddr("user");
-        vm.prank(hook);
-        vault.withdraw(40e18, user, 0);
-
-        // Verify user received the sUSDS.
-        (bool ok2, bytes memory data) = SUSDS_TOKEN.staticcall(abi.encodeWithSignature("balanceOf(address)", user));
-        assertTrue(ok2);
-        assertEq(abi.decode(data, (uint256)), 40e18);
+        assertEq(claimBacking, 0);
     }
 }

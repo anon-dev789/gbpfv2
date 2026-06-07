@@ -77,12 +77,14 @@ contract HookTest is Test {
         // then call initialize(hook) on Vault and GBPF to wire the HOOK address. This matches
         // the production deploy pattern described in DEPLOY_DESIGN.md.
         gbpf = new GBPF();
-        vault = new Vault(beneficiary, address(sUsds), address(ssr));
+        vault = new Vault(
+            beneficiary, address(sUsds), address(usds), address(gbpf), address(ssr), address(psm), address(pm)
+        );
         hook = new Hook(
             address(pm), address(vault), address(oracle), address(gbpf), address(usds), address(sUsds), address(psm)
         );
         vault.initialize(address(hook));
-        gbpf.initialize(address(hook));
+        gbpf.initialize(address(hook), address(vault));
 
         // Build the canonical poolKey the hook expects.
         bool usdsIsToken0 = address(usds) < address(gbpf);
@@ -102,23 +104,20 @@ contract HookTest is Test {
     }
 
     function _bootstrap() internal {
-        // The bootstrap is conceptually: $1 USDS → 1 sUSDS (chi=1) → mint ~0.8 GBPF (at 1.25 GBP/USD)
-        //   → send all the GBPF to address(0).
-        // But our GBPF.mint() rejects address(0). So instead: mint to a burner address and never
-        // touch it. Equivalent for our purposes (it's permanently locked).
+        // Seed the vault's principalSUsds by running a real recordMint + flush cycle. This is the
+        // same path mainnet uses to bootstrap the protocol.
         uint256 seedUsds = 1e18;
-        usds.mint(address(this), seedUsds);
-        usds.approve(address(psm), seedUsds);
-        uint256 received = psm.swapExactIn(address(usds), address(sUsds), seedUsds, 0, address(vault), 0);
+        pm.mintClaim(address(vault), uint256(uint160(address(usds))), seedUsds);
+        pm.fund(address(usds), seedUsds);
         vm.prank(address(hook));
-        vault.deposit(received, 0);
+        vault.recordMint(seedUsds, 0); // no fee on the bootstrap mint
+        vault.flush(); // converts USDS claim into sUSDS principal
 
-        // Mint GBPF equivalent to the seed (at oracle rate, ignoring fees): 1 USDS / 1.25 = 0.8 GBPF.
-        // Send to a "burn" address that GBPF.mint() will accept.
-        uint256 seedGbpf = received * WAD / GBP_USD_WAD;
-        address burn = address(0xDeaD);
+        // Mint the GBPF that corresponds to the seed deposit (at oracle rate) so supply matches
+        // backing. Sent to a burn address so it's permanently locked.
+        uint256 seedGbpf = seedUsds * WAD / GBP_USD_WAD;
         vm.prank(address(hook));
-        gbpf.mint(burn, seedGbpf);
+        gbpf.mint(address(0xDeaD), seedGbpf);
     }
 
     // ============================================================
@@ -220,19 +219,20 @@ contract HookTest is Test {
         assertLt(gbpfDelta, 799e18, "GBPF out too high");
     }
 
-    function test_mint_exactIn_pendingBeneficiary_increments_by_fee() public {
+    function test_mint_exactIn_pendingBeneficiaryClaim_increments_by_fee() public {
         uint256 usdsIn = 1000e18;
         pm.fund(address(usds), usdsIn);
 
-        uint256 pendingBefore = vault.pendingBeneficiarySUsds();
+        uint256 pendingBefore = vault.pendingBeneficiaryUsdsClaim();
         SwapParams memory params =
             SwapParams({zeroForOne: hook.USDS_IS_TOKEN0(), amountSpecified: -int256(usdsIn), sqrtPriceLimitX96: 0});
         vm.prank(address(pm));
         hook.beforeSwap(user, poolKey, params, "");
 
-        uint256 pendingDelta = vault.pendingBeneficiarySUsds() - pendingBefore;
         // Fee in USDS terms: 1000 * 0.002 / (1 + 0 + 0.002) ≈ 1.996 USDS.
-        // At chi=1, sUSDS = USDS, so fee in sUSDS ≈ 1.996 sUSDS.
+        // Under the V4 6909-claim flow, this lands in pendingBeneficiaryUsdsClaim, not in
+        // pendingBeneficiarySUsds (which only updates during flush).
+        uint256 pendingDelta = vault.pendingBeneficiaryUsdsClaim() - pendingBefore;
         assertGt(pendingDelta, 1.99e18);
         assertLt(pendingDelta, 2.01e18);
     }
@@ -241,24 +241,22 @@ contract HookTest is Test {
     // Mint exact-output
     // ============================================================
 
-    function test_mint_exactOut_consumes_expected_usds() public {
+    function test_mint_exactOut_creates_expected_usds_claim() public {
         uint256 gbpfOutTarget = 100e18;
-        // Generously fund PM with USDS so the take succeeds whatever we compute.
-        pm.fund(address(usds), 1_000_000e18);
 
         SwapParams memory params = SwapParams({
             zeroForOne: hook.USDS_IS_TOKEN0(), amountSpecified: int256(gbpfOutTarget), sqrtPriceLimitX96: 0
         });
         uint256 gbpfBalBefore = gbpf.balanceOf(address(pm));
+        uint256 claimBefore = vault.pendingUsdsClaim();
         vm.prank(address(pm));
         hook.beforeSwap(user, poolKey, params, "");
 
         // PM should now hold exactly gbpfOutTarget more GBPF.
         assertEq(gbpf.balanceOf(address(pm)) - gbpfBalBefore, gbpfOutTarget);
 
-        // USDS taken from PM should be ~ 100 GBPF * 1.25 * (1 + 0 + 0.002) ≈ 125.25 USDS.
-        uint256 usdsLeftInPm = usds.balanceOf(address(pm));
-        uint256 usdsConsumed = 1_000_000e18 - usdsLeftInPm;
+        // USDS claim should be ~ 100 GBPF * 1.25 * (1 + 0 + 0.002) ≈ 125.25 USDS.
+        uint256 usdsConsumed = vault.pendingUsdsClaim() - claimBefore;
         assertGt(usdsConsumed, 125e18);
         assertLt(usdsConsumed, 126e18);
     }
@@ -297,24 +295,24 @@ contract HookTest is Test {
     // Redeem exact-output
     // ============================================================
 
-    function test_redeem_exactOut_consumes_expected_gbpf() public {
-        _userMints(1000e18); // PM now holds ~798 GBPF post-mint, vault at ~100% solvency.
+    function test_redeem_exactOut_creates_expected_gbpf_claim() public {
+        _userMints(1000e18); // PM holds GBPF the user just minted; vault at ~100% solvency.
         uint256 usdsTarget = 100e18;
 
         SwapParams memory params =
             SwapParams({zeroForOne: !hook.USDS_IS_TOKEN0(), amountSpecified: int256(usdsTarget), sqrtPriceLimitX96: 0});
-        uint256 gbpfBefore = gbpf.balanceOf(address(pm));
         uint256 usdsBefore = usds.balanceOf(address(pm));
+        uint256 gbpfClaimBefore = vault.pendingGbpfClaim();
         vm.prank(address(pm));
         hook.beforeSwap(user, poolKey, params, "");
 
-        // PM should now hold exactly usdsTarget more USDS.
+        // PM holds exactly usdsTarget more USDS (settled by the hook from PSM3-converted sUSDS).
         assertEq(usds.balanceOf(address(pm)) - usdsBefore, usdsTarget);
 
-        // GBPF consumed at ~100% solvency: 100 / (1.25 * (1 + ~0 - 0.002)) ≈ 80.16 GBPF.
-        uint256 gbpfConsumed = gbpfBefore - gbpf.balanceOf(address(pm));
-        assertGt(gbpfConsumed, 80e18);
-        assertLt(gbpfConsumed, 81e18);
+        // Vault gains a GBPF 6909 claim of ~80.16 (the input the redeem implies).
+        uint256 gbpfClaim = vault.pendingGbpfClaim() - gbpfClaimBefore;
+        assertGt(gbpfClaim, 80e18);
+        assertLt(gbpfClaim, 81e18);
     }
 
     // ============================================================
@@ -327,5 +325,7 @@ contract HookTest is Test {
             SwapParams({zeroForOne: hook.USDS_IS_TOKEN0(), amountSpecified: -int256(usdsAmount), sqrtPriceLimitX96: 0});
         vm.prank(address(pm));
         hook.beforeSwap(user, poolKey, params, "");
+        // Flush so the USDS claim becomes real sUSDS principal and subsequent redeems have backing.
+        vault.flush();
     }
 }
