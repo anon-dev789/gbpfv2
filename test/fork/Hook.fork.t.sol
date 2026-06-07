@@ -72,19 +72,22 @@ contract MinimalRouter is IUnlockCallback {
         return abi.encode(delta);
     }
 
-    /// @dev Settle (delta > 0: we owe PM tokens) or take (delta < 0: PM owes us tokens).
+    /// @dev V4 delta from the SWAPPER's perspective:
+    ///        delta < 0  → swapper owes PM (sync + transfer + settle)
+    ///        delta > 0  → PM owes swapper (take)
     function _resolveLeg(Currency currency, int128 amount, address payer, address recipient) internal {
         if (amount == 0) return;
-        if (amount > 0) {
-            // We owe PM `amount` of this currency. Pull from payer, transfer to PM, settle.
+        if (amount < 0) {
             address token = Currency.unwrap(currency);
-            uint256 value = uint256(uint128(amount));
+            uint256 value = uint256(uint128(-amount));
+            // V4's settle pattern: sync first so PM snapshots the pre-transfer balance,
+            // then transfer in, then settle to compute the credit.
+            POOL_MANAGER.sync(currency);
             // forge-lint: disable-next-line(erc20-unchecked-transfer)
             IERC20Like(token).transferFrom(payer, address(POOL_MANAGER), value);
             POOL_MANAGER.settle();
         } else {
-            // PM owes us. Take to the recipient directly.
-            uint256 value = uint256(uint128(-amount));
+            uint256 value = uint256(uint128(amount));
             POOL_MANAGER.take(currency, recipient, value);
         }
     }
@@ -189,14 +192,21 @@ contract HookForkTest is Test {
         // User received some GBPF.
         uint256 gbpfReceived = gbpf.balanceOf(user) - userGbpfBefore;
         // At ~live GBP/USD (~1.25-1.30 in 2026), 1000 USDS mint should produce 750-800 GBPF.
-        // Curve is symmetric so ~100% solvency → spread ~0, only the 20bp fee applies.
         assertGt(gbpfReceived, 700e18, "GBPF received implausibly low");
         assertLt(gbpfReceived, 850e18, "GBPF received implausibly high");
 
-        // Vault now holds at least 1000 sUSDS-equivalent (minus the fee credited to
-        // pendingBeneficiarySUsds, but the sUSDS itself is in the vault).
+        // Under the V4 6909-claim flow, the mint creates a pending USDS claim on the vault.
+        // sUSDS only appears in the vault after flush() runs.
+        uint256 vaultPendingClaim = vault.pendingUsdsClaim();
+        assertGt(vaultPendingClaim, 900e18, "vault pending USDS claim implausibly low after mint");
+
+        // Anyone can flush. Run it and verify the claim converts to sUSDS principal.
+        vault.flush();
         uint256 vaultSusds = IERC20Like(SUSDS_TOKEN).balanceOf(address(vault));
-        assertGt(vaultSusds, 900e18, "vault sUSDS implausibly low after mint");
+        // After flush, vault holds ~1000 sUSDS (PSM3 conversion at the live SSR rate).
+        assertGt(vaultSusds, 900e18, "vault sUSDS implausibly low after flush");
+        // Pending claim cleared.
+        assertEq(vault.pendingUsdsClaim(), 0);
     }
 
     // ============================================================
@@ -214,8 +224,13 @@ contract HookForkTest is Test {
         router.swap(poolKey, mintParams, user);
         uint256 gbpfHeld = gbpf.balanceOf(user);
         assertGt(gbpfHeld, 0);
+        vm.stopPrank();
 
-        // Now redeem half of it.
+        // Flush the mint's USDS claim into real sUSDS principal so the redeem has backing.
+        vault.flush();
+
+        // Now redeem half of the GBPF.
+        vm.startPrank(user);
         uint256 gbpfToRedeem = gbpfHeld / 2;
         // forge-lint: disable-next-line(erc20-unchecked-transfer)
         gbpf.approve(address(router), type(uint256).max);
@@ -232,9 +247,6 @@ contract HookForkTest is Test {
         assertEq(gbpf.balanceOf(user), gbpfHeld - gbpfToRedeem);
         // User received USDS roughly equal to gbpfToRedeem * twap * (1 - fee).
         uint256 usdsReceived = IERC20Like(USDS_TOKEN).balanceOf(user) - userUsdsBeforeRedeem;
-        // At ~1.25 USDS/GBP and 0.2% fee, ~400 GBPF → ~498 USDS.
-        // The mint just before slightly drifted solvency upward so spread is slightly negative,
-        // making the redeem slightly worse. Allow generous bounds.
         assertGt(usdsReceived, gbpfToRedeem * 110 / 100, "USDS received implausibly low");
         assertLt(usdsReceived, gbpfToRedeem * 140 / 100, "USDS received implausibly high");
     }
@@ -258,8 +270,13 @@ contract HookForkTest is Test {
             SwapParams({zeroForOne: usdsIsToken0, amountSpecified: -int256(1000e18), sqrtPriceLimitX96: 0});
         router.swap(poolKey, mintParams, user);
         uint256 gbpfHeld = gbpf.balanceOf(user);
+        vm.stopPrank();
 
-        // Redeem all of it.
+        // Flush so the USDS claim becomes real sUSDS principal, backing the upcoming redeem.
+        vault.flush();
+
+        // Redeem all of the GBPF.
+        vm.startPrank(user);
         SwapParams memory redeemParams =
             SwapParams({zeroForOne: !usdsIsToken0, amountSpecified: -int256(gbpfHeld), sqrtPriceLimitX96: 0});
         router.swap(poolKey, redeemParams, user);
