@@ -29,6 +29,8 @@ depth = 32
 fail_on_revert = false
 
 [profile.ci]
+# CI uses Foundry's auto-installed solc; overrides the local .solc workaround.
+solc = "0.8.26"
 fuzz = { runs = 50_000 }
 invariant = { runs = 1_000, depth = 64 }
 

@@ -1,0 +1,39 @@
+name: Fork tests
+
+# Runs the fork test suite against real Base mainnet on a schedule. Catches infrastructure
+# drift: if Chainlink, Spark PSM3, sUSDS, the V4 PoolManager, or any other hardcoded Base
+# address changes behaviour, we'll find out within a week.
+#
+# Also manually triggerable via workflow_dispatch.
+
+permissions: {}
+
+on:
+  schedule:
+    # Weekly, Monday 03:00 UTC.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+env:
+  FOUNDRY_PROFILE: ci
+
+jobs:
+  fork:
+    name: Base mainnet fork tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run fork tests
+        # BASE_RPC_URL falls back to Base's public endpoint inside each test's setUp.
+        # If/when we acquire a private RPC for CI, set it as a repository secret named
+        # BASE_RPC_URL and add `env: BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}` here.
+        run: forge test --match-path 'test/fork/**' -vvv
