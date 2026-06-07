@@ -20,14 +20,13 @@ contract DeployForkTest is Test {
     uint256 internal constant BASE_FORK_BLOCK = 46_700_000;
 
     Deploy internal script;
-    address internal beneficiary;
+
+    /// Hardcoded in script/Deploy.s.sol; mirrored here for assertion. The real Gnosis Safe on Base.
+    address internal constant BENEFICIARY = 0x621D531A97185BcB5f3E513C192a3327163377D3;
 
     function setUp() public {
         string memory rpc = vm.envOr("BASE_RPC_URL", string("https://mainnet.base.org"));
         vm.createSelectFork(rpc, BASE_FORK_BLOCK);
-
-        beneficiary = makeAddr("beneficiary-multisig");
-        vm.setEnv("BENEFICIARY", vm.toString(beneficiary));
 
         script = new Deploy();
     }
@@ -59,7 +58,7 @@ contract DeployForkTest is Test {
     function test_deploy_wires_vault_to_real_susds_and_ssr() public {
         Deploy.Deployment memory d = script.run();
         Vault vault = Vault(d.vault);
-        assertEq(vault.BENEFICIARY(), beneficiary);
+        assertEq(vault.BENEFICIARY(), BENEFICIARY);
         assertEq(vault.SUSDS(), 0x5875eEE11Cf8398102FdAd704C9E96607675467a);
         assertEq(address(vault.SSR_ORACLE()), 0x65d946e533748A998B1f0E430803e39A6388f7a1);
         // lastSettledChi was seeded from getConversionRate() at deploy time.

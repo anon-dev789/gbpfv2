@@ -120,11 +120,10 @@ contract HookForkTest is Test {
         string memory rpc = vm.envOr("BASE_RPC_URL", string("https://mainnet.base.org"));
         vm.createSelectFork(rpc, BASE_FORK_BLOCK);
 
-        beneficiary = makeAddr("beneficiary-multisig");
+        beneficiary = 0x621D531A97185BcB5f3E513C192a3327163377D3; // hardcoded in Deploy.s.sol
         user = makeAddr("user");
 
         // Run the production deploy script.
-        vm.setEnv("BENEFICIARY", vm.toString(beneficiary));
         Deploy script = new Deploy();
         Deploy.Deployment memory d = script.run();
         hook = Hook(d.hook);

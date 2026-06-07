@@ -19,12 +19,14 @@ import {HookMiner} from "./HookMiner.sol";
 ///         See DEPLOY_DESIGN.md for the design rationale (especially the circular dependency
 ///         analysis and the seed-and-burn flow).
 ///
-///         Usage:
-///           BENEFICIARY=0xMultisig forge script script/Deploy.s.sol:Deploy \
-///             --rpc-url base --broadcast --verify
+///         Usage (with encrypted keystore):
+///           forge script script/Deploy.s.sol:Deploy \
+///             --rpc-url base --broadcast --verify \
+///             --account deployer --sender 0xYourDeployerAddress
 ///
-///         Pre-flight: the deployer (msg.sender of the broadcast) must hold at least
-///         1 USDS on Base for the seed swap, plus enough ETH for gas.
+///         The BENEFICIARY multisig is hardcoded into this script — see the constant below.
+///         The deployer (msg.sender of the broadcast) must hold at least 1 USDS on Base for
+///         the seed swap plus enough ETH for gas.
 contract Deploy is Script {
     // ============================================================================================
     // Base mainnet addresses
@@ -37,6 +39,11 @@ contract Deploy is Script {
     address internal constant USDS_TOKEN = 0x820C137fa70C8691f0e44Dc420a5e53c168921Dc;
     address internal constant V4_POOL_MANAGER = 0x498581fF718922c3f8e6A244956aF099B2652b2b;
     address internal constant SPARK_PSM3 = 0x1601843c5E9bC251A3272907010AFa41Fa18347E;
+
+    /// Beneficiary multisig (Gnosis Safe on Base). Receives 100% of mint/redeem flat fees and
+    /// 50% of sUSDS yield. Baked into the Vault immutably; cannot be changed post-deploy.
+    /// Confirmed deployed on Base: responds to the Safe `masterCopy()` selector.
+    address internal constant BENEFICIARY = 0x621D531A97185BcB5f3E513C192a3327163377D3;
 
     /// Foundry's default CREATE2 deployer, present on every chain at the same address.
     address internal constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
@@ -76,9 +83,6 @@ contract Deploy is Script {
     }
 
     function run() external returns (Deployment memory) {
-        address beneficiary = vm.envAddress("BENEFICIARY");
-        require(beneficiary != address(0), "BENEFICIARY env var unset or zero");
-
         // 1. Pre-flight verification: every hardcoded address must be live.
         _preflightChecks();
 
@@ -103,7 +107,7 @@ contract Deploy is Script {
         // 4. Deploy Vault (HOOK unset). Vault needs USDS, GBPF, PSM3, PoolManager because it
         //    runs the deferred USDS→sUSDS conversion + GBPF burn during flush().
         Vault vault = new Vault(
-            beneficiary, SUSDS_TOKEN, USDS_TOKEN, address(gbpf), SPARK_SSR_AUTH_ORACLE, SPARK_PSM3, V4_POOL_MANAGER
+            BENEFICIARY, SUSDS_TOKEN, USDS_TOKEN, address(gbpf), SPARK_SSR_AUTH_ORACLE, SPARK_PSM3, V4_POOL_MANAGER
         );
         console2.log("Vault deployed at", address(vault));
 
