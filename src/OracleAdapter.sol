@@ -54,6 +54,11 @@ contract OracleAdapter {
     ///      For the GBP/USD feed on Base, decimals = 8 and WAD_SCALE = 1e10.
     uint256 public immutable WAD_SCALE;
 
+    /// @dev Block timestamp at construction. Until TWAP_WINDOW seconds have elapsed past this, the
+    ///      TWAP would fall back to (near-)spot because no snapshot old enough exists; we report
+    ///      unhealthy during that warmup so swaps cannot transact against an un-smoothed price.
+    uint256 public immutable DEPLOYED_AT;
+
     /// @dev Length of the cumulative-snapshot ring buffer. Sized to comfortably exceed the TWAP
     ///      window divided by Chainlink's update cadence; with 24h heartbeat / 0.5% deviation
     ///      and a 5-min window, even one snapshot would technically suffice for normal operation,
@@ -103,7 +108,9 @@ contract OracleAdapter {
         Stale,
         Deviation,
         SequencerDown,
-        SequencerGrace
+        SequencerGrace,
+        BadAnswer,
+        WindowUnreachable
     }
 
     // ============================================================================================
@@ -134,6 +141,7 @@ contract OracleAdapter {
         SEQUENCER_GRACE = sequencerGrace_;
         COOLDOWN = cooldown_;
         WAD_SCALE = 10 ** (18 - IChainlinkFeed(chainlink_).decimals());
+        DEPLOYED_AT = block.timestamp;
 
         // Seed the ring with the current Chainlink observation. This makes the first update()
         // immediately useful instead of returning a TwapWindowUnreachable error.
@@ -143,10 +151,16 @@ contract OracleAdapter {
         // forge-lint: disable-next-line(unsafe-typecast)
         _lastChainlinkUpdatedAt = uint64(updatedAt);
         // The first snapshot has cumulativeWadSeconds = 0 by definition (no time has elapsed
-        // since "the beginning of observation"). We record it at the current block timestamp
-        // so the TWAP can be computed against it.
+        // since "the beginning of observation"). It MUST be anchored to the same clock the
+        // integral uses — Chainlink's `updatedAt` — NOT block.timestamp. The two differ because
+        // Chainlink's reported updatedAt is always in the past relative to deploy (up to the
+        // heartbeat). Anchoring the seed at block.timestamp while the integral anchor
+        // (_lastChainlinkUpdatedAt) is `updatedAt` would, on the first ingest, credit a segment of
+        // length (newUpdatedAt - updatedAt) against a snapshot interval of (newUpdatedAt -
+        // block.timestamp), inflating the TWAP and producing a non-monotonic ring. Seeding at
+        // `updatedAt` keeps the snapshot timeline and the integral anchor on one clock.
         // forge-lint: disable-next-line(unsafe-typecast)
-        _writeSnapshot(uint64(block.timestamp), 0);
+        _writeSnapshot(uint64(updatedAt), 0);
     }
 
     // ============================================================================================
@@ -178,11 +192,19 @@ contract OracleAdapter {
         // forge-lint: disable-next-line(block-timestamp)
         bool stale = (block.timestamp > updatedAt) && (block.timestamp - updatedAt > MAX_STALENESS);
 
-        // 5. Compose pause state.
+        // 4b. Bad-answer check: a non-positive (or zero-after-scaling) Chainlink answer is a
+        //     malformed feed. The deviation breaker ignores sign, so without this a negative/zero
+        //     answer would otherwise pass straight through as "healthy" and collapse the TWAP to
+        //     zero, bricking the consuming hook's solvency math. Treat it as a pause trigger.
+        bool badAnswer = (_toWad(answer) == 0);
+
+        // 5. Compose pause state. Order: sequencer > stale > bad answer > deviation.
         if (!sequencerOk) {
             _arm(sequencerReason);
         } else if (stale) {
             _arm(PauseReason.Stale);
+        } else if (badAnswer) {
+            _arm(PauseReason.BadAnswer);
         } else if (deviationTriggered) {
             _arm(PauseReason.Deviation);
         }
@@ -191,7 +213,13 @@ contract OracleAdapter {
         pausedUntilTs = pausedUntil;
         // Validator timestamp drift (a few seconds) is irrelevant against a 15-minute cooldown.
         // forge-lint: disable-next-line(block-timestamp)
-        healthy = (pausedUntilTs == 0 || block.timestamp >= pausedUntilTs);
+        bool cooldownClear = (pausedUntilTs == 0 || block.timestamp >= pausedUntilTs);
+
+        // The TWAP must cover the full committed window and the warmup must be over, otherwise the
+        // reported price is a (near-)spot fallback with less manipulation resistance than the
+        // protocol assumes. These are transient startup/degradation states that self-clear, so
+        // they gate `healthy` directly rather than arming the hysteresis cooldown.
+        healthy = cooldownClear && _windowCovered() && !_inWarmup();
     }
 
     /// @notice Pure-view variant: returns what update() WOULD report without writing state.
@@ -208,9 +236,11 @@ contract OracleAdapter {
         // forge-lint: disable-next-line(block-timestamp)
         bool stale = (block.timestamp > updatedAt) && (block.timestamp - updatedAt > MAX_STALENESS);
 
+        bool badAnswer = (_toWad(answer) == 0);
+
         // Compute a hypothetical pausedUntil under the current observations.
         uint64 effective = pausedUntil;
-        if (!sequencerOk || stale || deviation) {
+        if (!sequencerOk || stale || badAnswer || deviation) {
             // Safety: block.timestamp + COOLDOWN fits in uint64 for ~584 billion years.
             // forge-lint: disable-next-line(unsafe-typecast)
             uint64 candidate = uint64(block.timestamp + COOLDOWN);
@@ -220,7 +250,8 @@ contract OracleAdapter {
         twapWad = _previewTwap(answer, updatedAt);
         pausedUntilTs = effective;
         // forge-lint: disable-next-line(block-timestamp)
-        healthy = (effective == 0 || block.timestamp >= effective);
+        bool cooldownClear = (effective == 0 || block.timestamp >= effective);
+        healthy = cooldownClear && _windowCovered() && !_inWarmup();
     }
 
     /// @notice The most recently observed Chainlink price, normalised to WAD.
@@ -457,6 +488,34 @@ contract OracleAdapter {
     /// @dev Read the latest Chainlink answer and updatedAt.
     function _readChainlink() internal view returns (int256 answer, uint256 updatedAt) {
         (, answer,, updatedAt,) = CHAINLINK.latestRoundData();
+    }
+
+    /// @dev True while still inside the first TWAP_WINDOW seconds after deploy, during which the
+    ///      TWAP necessarily falls back toward spot (no snapshot is old enough to span the window).
+    ///      Reported as unhealthy so the protocol cannot transact against an un-smoothed price at
+    ///      the most sensitive moment in its lifecycle.
+    function _inWarmup() internal view returns (bool) {
+        // forge-lint: disable-next-line(block-timestamp)
+        return block.timestamp < DEPLOYED_AT + TWAP_WINDOW;
+    }
+
+    /// @dev True iff the ring can supply a snapshot at-or-before (now - TWAP_WINDOW), i.e. the TWAP
+    ///      genuinely spans the full committed window. Returns false when the ring has been
+    ///      exhausted by a burst of Chainlink updates (>RING_SIZE-1 within the window), which would
+    ///      otherwise silently shrink the averaging window toward spot with `healthy` still true.
+    ///      During warmup this is also false, but `_inWarmup()` already gates that case explicitly.
+    function _windowCovered() internal view returns (bool) {
+        uint256 count = _ringCount;
+        if (count == 0) return false;
+
+        uint256 head = _ringHead;
+        uint256 size = RING_SIZE;
+        uint256 oldest = (count < size) ? 0 : (head + 1) % size;
+        uint256 oldestTs = uint256(_ring[oldest].timestamp);
+
+        // forge-lint: disable-next-line(block-timestamp)
+        uint256 targetTs = block.timestamp > TWAP_WINDOW ? block.timestamp - TWAP_WINDOW : 0;
+        return oldestTs <= targetTs;
     }
 
     /// @dev Arm the cooldown: extend pausedUntil if the new candidate is later. Trigger only

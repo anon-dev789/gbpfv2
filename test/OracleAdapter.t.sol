@@ -53,10 +53,21 @@ contract OracleAdapterTest is Test {
     // Healthy path
     // ============================================================
 
-    function test_update_healthy_when_everything_ok() public {
+    function test_update_unhealthy_during_warmup() public {
+        // At deploy time the TWAP has no full window to average over, so the adapter reports
+        // unhealthy (the warmup gate) even though every other condition is fine. The TWAP value
+        // is still the spot fallback, but consumers must not transact on it.
         (uint256 twap, bool healthy,) = oracle.update();
-        assertTrue(healthy);
-        // No time has passed since deploy, so TWAP defaults to the latest price.
+        assertFalse(healthy, "unhealthy during warmup window");
+        assertEq(twap, INITIAL_PRICE_WAD);
+    }
+
+    function test_update_healthy_after_warmup() public {
+        // Once TWAP_WINDOW has elapsed past deploy and a full window of observations exists, the
+        // adapter is healthy under nominal conditions.
+        vm.warp(block.timestamp + TWAP_WINDOW + 1);
+        (uint256 twap, bool healthy,) = oracle.update();
+        assertTrue(healthy, "healthy after warmup");
         assertEq(twap, INITIAL_PRICE_WAD);
     }
 
@@ -85,6 +96,40 @@ contract OracleAdapterTest is Test {
         assertTrue(healthy);
         // Allow tiny imprecision; expect very close to 1.26e18.
         assertApproxEqAbs(twap, 1.26e18, 1e15, "TWAP should equal 1.26 after window of new price");
+    }
+
+    /// @dev Regression: the seed snapshot must be anchored to Chainlink's `updatedAt`, NOT to
+    ///      `block.timestamp`. In production Chainlink's updatedAt is always in the past at deploy
+    ///      (up to the heartbeat), so the two clocks differ. If the seed were anchored to
+    ///      block.timestamp, the first ingest would credit a segment of length
+    ///      (newUpdatedAt - seedUpdatedAt) against a snapshot interval of
+    ///      (newUpdatedAt - block.timestamp), inflating the TWAP of a flat price by tens of
+    ///      percent and producing a non-monotonic ring. With the fix, a flat price yields a flat
+    ///      TWAP regardless of the deploy-time staleness gap.
+    function test_twap_correct_when_seed_updatedAt_predates_deploy() public {
+        uint256 t0 = 1_700_000_000; // matches setUp warp
+        // Deploy a fresh oracle whose feed last updated 1 hour BEFORE deploy, price flat at 1.25.
+        MockChainlinkFeed staleCl = new MockChainlinkFeed(FEED_DECIMALS, INITIAL_PRICE, t0 - 1 hours);
+        OracleAdapter o = new OracleAdapter(
+            address(staleCl), address(seq), TWAP_WINDOW, MAX_STALENESS, MAX_STEP_WAD, SEQUENCER_GRACE, COOLDOWN
+        );
+
+        // A new Chainlink round arrives AFTER the warmup window, still at the same flat price.
+        vm.warp(t0 + 400);
+        staleCl.set(INITIAL_PRICE, t0 + 400);
+        o.update();
+
+        // Read so that targetTs (= now - TWAP_WINDOW) lands STRICTLY INSIDE the seed→ingest
+        // segment, i.e. between the seed timestamp and the first ingest at t0+400. now = t0+500
+        // gives targetTs = t0+200, which is interior. This is the regime where the buggy
+        // (block.timestamp-anchored) seed reconstructs an inflated segment price; the boundary
+        // case (targetTs == an ingest timestamp) accidentally cancels the error, so it must be
+        // avoided here.
+        vm.warp(t0 + 500);
+        (uint256 twap, bool healthy,) = o.update();
+        assertTrue(healthy, "should be healthy past warmup with a covered window");
+        // Flat price in → flat TWAP out. Pre-fix this reads materially above 1.25e18.
+        assertApproxEqAbs(twap, INITIAL_PRICE_WAD, 1e12, "flat price must yield flat TWAP");
     }
 
     function test_twap_step_change_mid_window_is_blend() public {
@@ -170,6 +215,8 @@ contract OracleAdapterTest is Test {
     }
 
     function test_sequencer_recovered_past_grace_is_ok() public {
+        // Past the warmup window so only the sequencer condition is under test.
+        vm.warp(block.timestamp + TWAP_WINDOW + 1);
         seq.setWithStartedAt(0, block.timestamp - SEQUENCER_GRACE - 1, block.timestamp - SEQUENCER_GRACE - 1);
         (, bool healthy,) = oracle.update();
         assertTrue(healthy);

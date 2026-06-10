@@ -48,6 +48,11 @@ contract Vault is IUnlockCallback {
     ///      Set once via initialize() during deployment; cannot be changed thereafter.
     address public HOOK;
 
+    /// @dev The deployer, captured at construction. Only this address may call initialize(),
+    ///      closing the (otherwise permissionless) window in which an attacker could front-run
+    ///      initialize() with a malicious hook between deploy and wiring.
+    address internal immutable DEPLOYER;
+
     /// @dev The hardcoded multisig that receives the beneficiary share.
     address public immutable BENEFICIARY;
 
@@ -73,11 +78,27 @@ contract Vault is IUnlockCallback {
     uint256 internal constant BENEFICIARY_YIELD_NUM = 1;
     uint256 internal constant BENEFICIARY_YIELD_DENOM = 2;
 
-    /// @dev sUSDS owed to BENEFICIARY (already converted; includes flat fees + yield share).
+    /// @dev sUSDS conversion rate is a ray (1e27). USDS-value = shares * chi / RAY.
+    uint256 internal constant RAY = 1e27;
+
+    /// @dev sUSDS owed to BENEFICIARY from FLAT FEES only (already converted to shares). The
+    ///      beneficiary's YIELD share is tracked separately in `beneficiaryYieldUsds` and converted
+    ///      to shares lazily at the live chi — see _settleBeneficiaryYield for why.
     uint256 public pendingBeneficiarySUsds;
 
-    /// @dev sUSDS principal currently earning yield for the protocol.
+    /// @dev GROSS sUSDS principal held for the protocol. Reduced only by redeem payouts and by the
+    ///      beneficiary yield-share handoff in withdrawBeneficiary — NOT by yield settlement. The
+    ///      protocol-NET principal (what actually backs GBPF after the beneficiary's claim) is
+    ///      `principalSUsds - beneficiaryYieldShares(chi)`.
     uint256 public principalSUsds;
+
+    /// @dev Beneficiary's accrued HALF-of-yield, denominated in USDS (1e18, NOT shares).
+    ///      Path-independent: USDS yield is exactly additive across any partition of the chi
+    ///      interval (Σ principalᵢ·Δchiᵢ), so settling N times equals settling once. Converted to
+    ///      sUSDS shares at the prevailing chi only on read / withdrawal, always rounding down
+    ///      (in the protocol's favour). This replaces the previous in-shares incremental credit,
+    ///      which compounded in the beneficiary's favour (~1.2%/yr at 5% APY) when settled often.
+    uint256 public beneficiaryYieldUsds;
 
     /// @dev chi (in ray) at the most recent yield settlement. Monotonically non-decreasing.
     uint256 public lastSettledChi;
@@ -123,6 +144,7 @@ contract Vault is IUnlockCallback {
     error NotInitialized();
     error NothingToFlush();
     error ReentrantUnlock();
+    error NotDeployer();
 
     // ============================================================================================
     // Construction
@@ -137,6 +159,7 @@ contract Vault is IUnlockCallback {
         address psm3_,
         address poolManager_
     ) {
+        DEPLOYER = msg.sender;
         BENEFICIARY = beneficiary_;
         SUSDS = sUsds_;
         USDS = usds_;
@@ -153,7 +176,9 @@ contract Vault is IUnlockCallback {
 
     /// @notice One-shot setter for the Hook address. Called by the deploy script after the Hook
     ///         is deployed at its mined CREATE2 address. After this call, HOOK is fixed forever.
+    /// @dev    Deployer-only; reverts if called twice or with the zero address.
     function initialize(address hook_) external {
+        if (msg.sender != DEPLOYER) revert NotDeployer();
         if (HOOK != address(0)) revert AlreadyInitialized();
         if (hook_ == address(0)) revert ZeroHook();
         HOOK = hook_;
@@ -199,9 +224,13 @@ contract Vault is IUnlockCallback {
 
         _settleBeneficiaryYield();
 
-        // The redeem must fit BOTH the payout to the hook and the new beneficiary credit
-        // inside principalSUsds — otherwise we'd promise the beneficiary more than the vault holds.
-        uint256 backing = principalSUsds;
+        // The redeem must fit BOTH the payout to the hook and the new beneficiary flat-fee credit
+        // inside the protocol-NET principal — gross principal minus the shares already owed to the
+        // beneficiary as accrued yield — otherwise we'd promise the beneficiary more than the vault
+        // holds, or dip into the beneficiary's yield share.
+        uint256 yieldShares = _settledBeneficiaryYieldShares();
+        uint256 gross = principalSUsds;
+        uint256 backing = gross > yieldShares ? gross - yieldShares : 0;
         uint256 total = sUsdsToHook + feeSUsds;
         if (total > backing) {
             revert InsufficientBackingForRedeem(total, backing);
@@ -210,11 +239,26 @@ contract Vault is IUnlockCallback {
         if (feeSUsds > 0) {
             pendingBeneficiarySUsds += feeSUsds;
         }
-        principalSUsds = backing - total;
+        // Both legs leave gross principal: sUsdsToHook is transferred out; feeSUsds is reclassified
+        // into the flat-fee bucket. total <= backing <= gross, so this cannot underflow.
+        principalSUsds = gross - total;
         pendingGbpfClaim += gbpfClaim;
 
         SUSDS.safeTransfer(HOOK, sUsdsToHook);
         emit RecordRedeem(HOOK, sUsdsToHook, gbpfClaim, feeSUsds);
+    }
+
+    /// @notice Return unused sUSDS from the Hook back into protocol principal. Called by the Hook
+    ///         after a redeem-exactOutput when PSM3.swapExactOut consumed less than the sUSDS the
+    ///         Vault advanced, so the remainder is restored to backing instead of stranding in the
+    ///         immutable Hook. The Hook must have transferred `amount` sUSDS to this Vault first.
+    function recordSUsdsReturn(uint256 amount) external {
+        if (HOOK == address(0)) revert NotInitialized();
+        if (msg.sender != HOOK) revert NotHook();
+        if (amount == 0) revert ZeroAmount();
+        // Settle on the pre-existing principal before adding the returned shares.
+        _settleBeneficiaryYield();
+        principalSUsds += amount;
     }
 
     // ============================================================================================
@@ -241,12 +285,21 @@ contract Vault is IUnlockCallback {
         _unlocking = false;
     }
 
-    /// @notice Send the beneficiary's accrued share to the hardcoded BENEFICIARY address.
+    /// @notice Send the beneficiary's accrued share (flat fees + yield) to BENEFICIARY.
     function withdrawBeneficiary() external {
         _settleBeneficiaryYield();
-        uint256 amount = pendingBeneficiarySUsds;
+        // Realise the accrued yield (tracked in USDS) into shares at the live chi, and hand those
+        // shares off out of gross principal.
+        uint256 yieldShares = _settledBeneficiaryYieldShares();
+        uint256 amount = pendingBeneficiarySUsds + yieldShares;
         if (amount == 0) revert NothingToWithdraw();
+
         pendingBeneficiarySUsds = 0;
+        beneficiaryYieldUsds = 0;
+        // yieldShares <= principalSUsds: the shares were always part of gross principal and the
+        // conversion floors, so this cannot underflow in any reachable state.
+        principalSUsds -= yieldShares;
+
         SUSDS.safeTransfer(BENEFICIARY, amount);
         emit BeneficiaryWithdrawal(amount, lastSettledChi);
     }
@@ -312,7 +365,8 @@ contract Vault is IUnlockCallback {
     {
         _settleBeneficiaryYield();
         sUsdsBalance = _vaultBalance();
-        pendingBeneficiary = pendingBeneficiarySUsds;
+        // Beneficiary claim = flat fees + accrued yield (converted to shares at the live chi).
+        pendingBeneficiary = pendingBeneficiarySUsds + _settledBeneficiaryYieldShares();
         ssrConversionRate = SSR_ORACLE.getConversionRate();
         // USDS claim backing is pending claim minus the beneficiary's portion.
         uint256 claim = pendingUsdsClaim;
@@ -338,6 +392,12 @@ contract Vault is IUnlockCallback {
     // Internal
     // ============================================================================================
 
+    /// @dev Accrue the beneficiary's half-of-yield into the path-independent USDS accumulator.
+    ///      Yield over [lastChi, currentChi] on the gross principal is `principal * chiDelta / RAY`
+    ///      USDS; the beneficiary's share is NUM/DENOM of that. Because this is denominated in USDS
+    ///      (not shares), it is exactly additive over any partition of the chi interval, so settling
+    ///      frequently no longer over-credits. `principalSUsds` is intentionally NOT reduced here —
+    ///      the share handoff happens lazily in withdrawBeneficiary.
     function _settleBeneficiaryYield() internal {
         uint256 currentChi = SSR_ORACLE.getConversionRate();
         uint256 lastChi = lastSettledChi;
@@ -350,23 +410,42 @@ contract Vault is IUnlockCallback {
         }
 
         uint256 chiDelta = currentChi - lastChi;
-        uint256 credit = principal * chiDelta * BENEFICIARY_YIELD_NUM / (currentChi * BENEFICIARY_YIELD_DENOM);
+        // Floor at every step → beneficiary rounded down → protocol favoured.
+        uint256 yieldUsds = principal * chiDelta / RAY;
+        uint256 credit = yieldUsds * BENEFICIARY_YIELD_NUM / BENEFICIARY_YIELD_DENOM;
 
-        pendingBeneficiarySUsds += credit;
-        principalSUsds = principal - credit;
+        beneficiaryYieldUsds += credit;
         lastSettledChi = currentChi;
 
         emit YieldSettled(credit, currentChi);
     }
 
+    /// @dev The beneficiary's accrued YIELD claim valued in sUSDS shares at the live chi (floored).
+    ///      Does NOT include flat fees (those live in pendingBeneficiarySUsds). View-only: includes
+    ///      not-yet-settled yield so callers needn't settle first.
     function _previewBeneficiaryShare() internal view returns (uint256) {
         uint256 currentChi = SSR_ORACLE.getConversionRate();
+        uint256 accruedUsds = beneficiaryYieldUsds;
+
         uint256 lastChi = lastSettledChi;
-        if (currentChi <= lastChi) return 0;
         uint256 principal = principalSUsds;
-        if (principal == 0) return 0;
-        uint256 chiDelta = currentChi - lastChi;
-        return principal * chiDelta * BENEFICIARY_YIELD_NUM / (currentChi * BENEFICIARY_YIELD_DENOM);
+        if (currentChi > lastChi && principal != 0) {
+            uint256 yieldUsds = principal * (currentChi - lastChi) / RAY;
+            accruedUsds += yieldUsds * BENEFICIARY_YIELD_NUM / BENEFICIARY_YIELD_DENOM;
+        }
+        if (accruedUsds == 0 || currentChi == 0) return 0;
+        // Convert accrued USDS → shares at the live chi (floor → protocol-favouring).
+        return accruedUsds * RAY / currentChi;
+    }
+
+    /// @dev Settled beneficiary yield converted to shares at the live chi (floored). Assumes yield
+    ///      has just been settled (lastSettledChi == currentChi), so it reads only the accumulator.
+    function _settledBeneficiaryYieldShares() internal view returns (uint256) {
+        uint256 accruedUsds = beneficiaryYieldUsds;
+        if (accruedUsds == 0) return 0;
+        uint256 currentChi = SSR_ORACLE.getConversionRate();
+        if (currentChi == 0) return 0;
+        return accruedUsds * RAY / currentChi;
     }
 
     function _vaultBalance() internal view returns (uint256) {

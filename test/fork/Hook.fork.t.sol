@@ -153,6 +153,12 @@ contract HookForkTest is Test {
         // GBPF's constructor already minted 1 wei of dust to 0xDeaD, so gbpfSupply > 0 from
         // the moment of deploy. The first user mint via the Hook proceeds normally — no need
         // for a separate bootstrap seed step.
+
+        // Advance past the oracle warmup window so the adapter reports healthy. The Chainlink
+        // answer is held over the warp (no new round), which is well within MAX_STALENESS, so the
+        // TWAP is simply the held price. On mainnet the protocol is likewise only usable once a
+        // full TWAP window of observations exists.
+        vm.warp(block.timestamp + 5 minutes + 1);
     }
 
     /// @dev Bridged USDS on Base uses Sky's Usds.sol. Foundry's `deal()` cheatcode probes for

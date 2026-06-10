@@ -52,19 +52,30 @@ contract OracleAdapterForkTest is Test {
         assertLt(priceWad, 2.0e18, "GBP/USD seed implausibly high");
     }
 
-    function test_initial_update_returns_healthy() public {
-        // First call to update() against a healthy sequencer + recent Chainlink should return
-        // healthy = true.
-        (uint256 twap, bool healthy,) = oracle.update();
-        assertTrue(healthy, "update unhealthy at fork block - bump BASE_FORK_BLOCK?");
-        // TWAP at first call = latest price (no window has elapsed yet).
-        assertEq(twap, oracle.latestPriceWad(), "first-call TWAP should equal latest price");
+    function test_initial_update_during_warmup_is_unhealthy() public {
+        // At the deploy block no full TWAP window exists yet, so the warmup gate reports unhealthy.
+        (, bool healthy,) = oracle.update();
+        assertFalse(healthy, "should be unhealthy during warmup window");
     }
 
-    function test_preview_matches_real_state() public view {
+    function test_update_returns_healthy_after_warmup() public {
+        // Past the warmup window, with a healthy sequencer + recent Chainlink, update() is healthy.
+        vm.warp(block.timestamp + TWAP_WINDOW + 1);
+        (uint256 twap, bool healthy,) = oracle.update();
+        assertTrue(healthy, "update unhealthy after warmup at fork block - bump BASE_FORK_BLOCK?");
+        // No Chainlink update over the warp, so the TWAP equals the held latest price.
+        assertEq(twap, oracle.latestPriceWad(), "post-warmup TWAP should equal latest price");
+    }
+
+    function test_preview_matches_real_state() public {
+        // During warmup, preview reports unhealthy (mirrors update()).
+        (, bool warmupHealthy,) = oracle.preview();
+        assertFalse(warmupHealthy, "preview should be unhealthy during warmup");
+
+        // After warmup, live Chainlink + sequencer at the pinned block report healthy.
+        vm.warp(block.timestamp + TWAP_WINDOW + 1);
         (uint256 previewTwap, bool previewHealthy,) = oracle.preview();
-        // Live Chainlink + sequencer at the pinned block should report healthy.
-        assertTrue(previewHealthy, "preview unhealthy at fork block");
+        assertTrue(previewHealthy, "preview unhealthy after warmup at fork block");
         assertGt(previewTwap, 0.8e18, "preview TWAP implausibly low");
     }
 

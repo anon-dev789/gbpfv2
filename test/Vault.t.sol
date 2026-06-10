@@ -240,10 +240,43 @@ contract VaultTest is Test {
         oracle.setConversionRate(RAY * 110 / 100);
         vault.settle();
 
-        // credit = 1000 * 0.1 / (2 * 1.1) ≈ 45.45 (existing formula)
-        uint256 expected = uint256(1000e18) * (RAY * 110 / 100 - RAY) / (2 * (RAY * 110 / 100));
-        assertEq(vault.pendingBeneficiarySUsds(), expected);
+        // Yield over the interval = principal * chiDelta / RAY = 1000 * 0.1 = 100 USDS.
+        // Beneficiary's half is now tracked in USDS (path-independent), not in shares.
+        assertEq(vault.beneficiaryYieldUsds(), 50e18, "beneficiary half of 100 USDS yield");
+        // Flat-fee bucket is untouched by yield.
+        assertEq(vault.pendingBeneficiarySUsds(), 0, "no flat fees");
         assertEq(vault.lastSettledChi(), RAY * 110 / 100);
+
+        // Converted to shares at the new chi (1.1): 50 / 1.1 ≈ 45.4545 sUSDS — matches the
+        // single-step value of the previous formula (which was only correct for a single step).
+        uint256 expectedShares = uint256(50e18) * RAY / (RAY * 110 / 100);
+        (, uint256 pendingBeneficiary,,) = vault.previewSolvencyInputs();
+        assertEq(pendingBeneficiary, expectedShares, "yield in shares at live chi");
+    }
+
+    /// @dev The core property the fix establishes: settling the SAME chi interval in many small
+    ///      steps credits the beneficiary the SAME USDS amount as settling once (modulo sub-wei
+    ///      flooring). The previous in-shares incremental formula over-credited here.
+    function test_yield_settle_is_step_count_invariant() public {
+        _seedPrincipal(1000e18);
+
+        // Single-step reference: 1.0 -> 1.05 in one settle.
+        oracle.setConversionRate(RAY * 105 / 100);
+        vault.settle();
+        uint256 singleStep = vault.beneficiaryYieldUsds();
+
+        // Reset a fresh vault and do the same interval in 50 steps.
+        setUp();
+        _seedPrincipal(1000e18);
+        for (uint256 i = 1; i <= 50; i++) {
+            uint256 chi = RAY + (RAY * 5 / 100) * i / 50; // linearly from RAY to 1.05*RAY
+            oracle.setConversionRate(chi);
+            vault.settle();
+        }
+        uint256 multiStep = vault.beneficiaryYieldUsds();
+
+        // Equal to within a handful of wei of flooring — NOT the ~0.6%+ drift of the old formula.
+        assertApproxEqAbs(multiStep, singleStep, 100, "USDS credit is step-count invariant");
     }
 
     // ============================================================
@@ -269,9 +302,9 @@ contract VaultTest is Test {
 
     /// @dev Direct storage write into pendingGbpfClaim for tests that build state synthetically.
     ///      Slot ordering of public state: 0=HOOK, 1=pendingBeneficiarySUsds, 2=principalSUsds,
-    ///      3=lastSettledChi, 4=pendingUsdsClaim, 5=pendingBeneficiaryUsdsClaim, 6=pendingGbpfClaim,
-    ///      7=_unlocking. Slot 6 is pendingGbpfClaim.
+    ///      3=beneficiaryYieldUsds, 4=lastSettledChi, 5=pendingUsdsClaim,
+    ///      6=pendingBeneficiaryUsdsClaim, 7=pendingGbpfClaim, 8=_unlocking. Slot 7 is pendingGbpfClaim.
     function _writePendingGbpfClaim(uint256 amount) internal {
-        vm.store(address(vault), bytes32(uint256(6)), bytes32(amount));
+        vm.store(address(vault), bytes32(uint256(7)), bytes32(amount));
     }
 }

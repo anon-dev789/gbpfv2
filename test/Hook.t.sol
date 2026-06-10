@@ -118,6 +118,10 @@ contract HookTest is Test {
         uint256 seedGbpf = seedUsds * WAD / GBP_USD_WAD;
         vm.prank(address(hook));
         gbpf.mint(address(0xDeaD), seedGbpf);
+
+        // Advance past the oracle warmup window so the adapter reports healthy. On mainnet the
+        // protocol is likewise only usable once a full TWAP window of observations exists.
+        vm.warp(block.timestamp + TWAP_WINDOW + 1);
     }
 
     // ============================================================

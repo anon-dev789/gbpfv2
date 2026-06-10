@@ -71,15 +71,22 @@ contract DeployForkTest is Test {
         assertEq(GBPF(d.gbpf).HOOK(), d.hook);
     }
 
-    function test_deploy_initialize_cannot_be_called_again() public {
+    function test_deploy_initialize_rejects_non_deployer() public {
         Deploy.Deployment memory d = script.run();
+        // A non-deployer is rejected by the deployer gate (the first line of defence) before the
+        // AlreadyInitialized check is ever reached — so an attacker can neither front-run nor
+        // re-point the hook/vault wiring.
         address attacker = makeAddr("attacker");
         vm.startPrank(attacker);
-        vm.expectRevert(Vault.AlreadyInitialized.selector);
+        vm.expectRevert(Vault.NotDeployer.selector);
         Vault(d.vault).initialize(attacker);
-        vm.expectRevert(GBPF.AlreadyInitialized.selector);
+        vm.expectRevert(GBPF.NotDeployer.selector);
         GBPF(d.gbpf).initialize(attacker, attacker);
         vm.stopPrank();
+
+        // And the wiring is already fixed: HOOK is set, so even the deployer's re-init is blocked.
+        assertEq(Vault(d.vault).HOOK(), d.hook, "vault hook wired");
+        assertEq(GBPF(d.gbpf).HOOK(), d.hook, "gbpf hook wired");
     }
 
     function test_deploy_hook_immutables_match_real_addresses() public {

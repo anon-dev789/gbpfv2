@@ -32,6 +32,11 @@ contract GBPF is ERC20 {
     ///      first real user mint via the Hook proceeds normally.
     uint256 internal constant DUST_AMOUNT = 1;
 
+    /// @dev The deployer, captured at construction. Only this address may call initialize(),
+    ///      closing the (otherwise permissionless) window in which an attacker could front-run
+    ///      initialize() with a malicious hook/vault between deploy and wiring.
+    address internal immutable DEPLOYER;
+
     error NotHook();
     error NotHookOrVault();
     error MintToZeroAddress();
@@ -39,16 +44,19 @@ contract GBPF is ERC20 {
     error ZeroHook();
     error ZeroVault();
     error NotInitialized();
+    error NotDeployer();
 
     constructor() {
+        DEPLOYER = msg.sender;
         // Mint dust to the burn address. _mint is internal-only; not gated by HOOK.
         _mint(DUST_BURN_ADDRESS, DUST_AMOUNT);
     }
 
     /// @notice One-shot setter for the Hook and Vault addresses. After this call, both are
     ///         fixed forever.
-    /// @dev    Reverts if called twice or with the zero address for either.
+    /// @dev    Deployer-only; reverts if called twice or with the zero address for either.
     function initialize(address hook_, address vault_) external {
+        if (msg.sender != DEPLOYER) revert NotDeployer();
         if (HOOK != address(0)) revert AlreadyInitialized();
         if (hook_ == address(0)) revert ZeroHook();
         if (vault_ == address(0)) revert ZeroVault();

@@ -77,6 +77,7 @@ contract Hook is IHooks {
     error WrongPool();
     error OraclePaused();
     error ZeroSwap();
+    error ZeroTwap();
     error InvalidHookCall();
 
     // ============================================================================================
@@ -162,7 +163,7 @@ contract Hook is IHooks {
     /// - `AmountTooLarge`    if a token amount exceeds int128 max (~1.7e38; far above any
     ///                        realistic swap size).
     function beforeSwap(
-        address, /* sender */
+        address sender,
         PoolKey calldata key,
         SwapParams calldata params,
         bytes calldata /* hookData */
@@ -177,6 +178,10 @@ contract Hook is IHooks {
         // 1. Check oracle health and pull TWAP.
         (uint256 twapWad, bool healthy,) = ORACLE.update();
         if (!healthy) revert OraclePaused();
+        // Fail closed on a non-positive / sentinel TWAP. A zero twap would otherwise revert
+        // opaquely inside the solvency mulDiv (divide-by-zero); guarding here makes the failure
+        // explicit and defends against a malformed feed that slipped past the oracle's own checks.
+        if (twapWad == 0) revert ZeroTwap();
 
         // 2. Settle vault yield and read solvency inputs.
         (uint256 sUsdsBalance, uint256 pendingBeneficiary, uint256 ssrRate, uint256 usdsClaimBacking) =
@@ -197,9 +202,9 @@ contract Hook is IHooks {
         bool isExactInput = (params.amountSpecified < 0);
 
         if (isMint) {
-            return _handleMint(params, twapWad, spreadWad, isExactInput);
+            return _handleMint(sender, params, twapWad, spreadWad, isExactInput);
         } else {
-            return _handleRedeem(params, twapWad, spreadWad, isExactInput);
+            return _handleRedeem(sender, params, twapWad, spreadWad, isExactInput);
         }
     }
 
@@ -305,7 +310,18 @@ contract Hook is IHooks {
         uint256 sUsdsUsdsValue = FixedPointMathLib.mulDiv(principal, ssrRate, RAY);
         uint256 totalUsdsValue = sUsdsUsdsValue + usdsClaimBacking;
         uint256 collateralGbpWad = FixedPointMathLib.mulDiv(totalUsdsValue, WAD, twapWad);
-        return FixedPointMathLib.mulDiv(collateralGbpWad, WAD, gbpfSupply);
+        uint256 solvencyWad = FixedPointMathLib.mulDiv(collateralGbpWad, WAD, gbpfSupply);
+
+        // Clamp rather than letting SpreadCurve.spread() revert on out-of-range. The curve
+        // already saturates (tanh) well below MAX_SOLVENCY_WAD, so clamping is behaviourally
+        // identical for every legitimate operating state. Without this clamp an extreme solvency —
+        // reachable only by collapsing supply toward the dust floor and donating sUSDS directly to
+        // the Vault — would revert spread() and permanently brick every swap on an immutable
+        // contract. Clamping converts that brick into a harmless saturated spread.
+        if (solvencyWad > SpreadCurve.MAX_SOLVENCY_WAD) {
+            solvencyWad = SpreadCurve.MAX_SOLVENCY_WAD;
+        }
+        return solvencyWad;
     }
 
     /// @dev Returns the mint price (USDS per GBPF) in WAD: twap * (WAD + spread + flatFee).
@@ -346,10 +362,13 @@ contract Hook is IHooks {
     /// @param spreadWad   Signed spread from SpreadCurve evaluated at pre-swap solvency.
     /// @param isExactInput true if amountSpecified < 0 (user supplies USDS amount),
     ///                     false if amountSpecified > 0 (user requests GBPF amount).
-    function _handleMint(SwapParams calldata params, uint256 twapWad, int256 spreadWad, bool isExactInput)
-        internal
-        returns (bytes4, BeforeSwapDelta, uint24)
-    {
+    function _handleMint(
+        address sender,
+        SwapParams calldata params,
+        uint256 twapWad,
+        int256 spreadWad,
+        bool isExactInput
+    ) internal returns (bytes4, BeforeSwapDelta, uint24) {
         uint256 mintPriceWad = _mintPriceWad(twapWad, spreadWad);
         uint256 usdsIn;
         uint256 gbpfOut;
@@ -382,29 +401,16 @@ contract Hook is IHooks {
         address(GBPF_TOKEN).safeTransfer(address(POOL_MANAGER), gbpfOut);
         POOL_MANAGER.settle();
 
-        emit Mint(tx.origin, usdsIn, gbpfOut, feeUsds);
+        emit Mint(sender, usdsIn, gbpfOut, feeUsds);
 
-        // Build the BeforeSwapDelta.
-        // specified delta: positive of usdsIn (we, the hook, are taking the user's specified token)
-        //                  for exactInput where amountSpecified<0, we want specified=+usdsIn so
-        //                  PM credits the hook for what the user paid. For exactOutput where
-        //                  amountSpecified>0 we want specified=-gbpfOut so PM debits the hook by
-        //                  what it owes the user.
-        // unspecified delta: the opposite side.
-        int128 specifiedDelta;
-        int128 unspecifiedDelta;
-        if (isExactInput) {
-            // specified token is USDS (the input). Hook is owed usdsIn.
-            // unspecified token is GBPF (the output). Hook owes gbpfOut.
-            specifiedDelta = _toPositiveInt128(usdsIn);
-            unspecifiedDelta = -_toPositiveInt128(gbpfOut);
-        } else {
-            // specified token is GBPF (the output). Hook owes gbpfOut.
-            // unspecified token is USDS (the input). Hook is owed usdsIn.
-            specifiedDelta = -_toPositiveInt128(gbpfOut);
-            unspecifiedDelta = _toPositiveInt128(usdsIn);
-        }
-        return (IHooks.beforeSwap.selector, toBeforeSwapDelta(specifiedDelta, unspecifiedDelta), 0);
+        // Build the BeforeSwapDelta. The user-specified token is USDS on exact-input (hook is owed
+        // usdsIn → positive specified) and GBPF on exact-output (hook owes gbpfOut → negative
+        // specified); the unspecified leg takes the opposite sign. See _buildDelta.
+        return (
+            IHooks.beforeSwap.selector,
+            _buildDelta(isExactInput ? usdsIn : gbpfOut, isExactInput ? gbpfOut : usdsIn, isExactInput),
+            0
+        );
     }
 
     // ============================================================================================
@@ -421,10 +427,13 @@ contract Hook is IHooks {
     /// @param spreadWad   Signed spread from SpreadCurve evaluated at pre-swap solvency.
     /// @param isExactInput true if amountSpecified < 0 (user supplies GBPF amount),
     ///                     false if amountSpecified > 0 (user requests USDS amount).
-    function _handleRedeem(SwapParams calldata params, uint256 twapWad, int256 spreadWad, bool isExactInput)
-        internal
-        returns (bytes4, BeforeSwapDelta, uint24)
-    {
+    function _handleRedeem(
+        address sender,
+        SwapParams calldata params,
+        uint256 twapWad,
+        int256 spreadWad,
+        bool isExactInput
+    ) internal returns (bytes4, BeforeSwapDelta, uint24) {
         uint256 redeemPriceWad = _redeemPriceWad(twapWad, spreadWad);
         uint256 gbpfIn;
         uint256 usdsOut;
@@ -457,8 +466,16 @@ contract Hook is IHooks {
         // Vault transfers sUsdsForUser to this hook + records the GBPF claim and beneficiary fee.
         VAULT.recordRedeem(sUsdsForUser, gbpfIn, feeSUsds);
 
-        // Convert sUSDS → USDS via PSM3.
-        PSM3.swapExactOut(SUSDS, USDS, usdsOut, sUsdsForUser, address(this), 0);
+        // Convert sUSDS → USDS via PSM3. swapExactOut returns the sUSDS actually consumed, which
+        // may be less than the sUsdsForUser the Vault advanced (preview/execution rounding). Any
+        // remainder would otherwise strand permanently in this immutable Hook, leaking from
+        // solvency backing — so we return it to the Vault as principal.
+        uint256 actualSUsdsIn = PSM3.swapExactOut(SUSDS, USDS, usdsOut, sUsdsForUser, address(this), 0);
+        if (actualSUsdsIn < sUsdsForUser) {
+            uint256 leftover = sUsdsForUser - actualSUsdsIn;
+            SUSDS.safeTransfer(address(VAULT), leftover);
+            VAULT.recordSUsdsReturn(leftover);
+        }
 
         // Push USDS to PoolManager so PM can pay the user during router settle.
         Currency usdsC = Currency.wrap(USDS);
@@ -466,18 +483,38 @@ contract Hook is IHooks {
         USDS.safeTransfer(address(POOL_MANAGER), usdsOut);
         POOL_MANAGER.settle();
 
-        emit Redeem(tx.origin, gbpfIn, usdsOut, feeUsds);
+        emit Redeem(sender, gbpfIn, usdsOut, feeUsds);
 
+        // For redeem, the specified/unspecified token roles mirror mint with gbpfIn/usdsOut.
+        // exactInput: specified = +gbpfIn (hook owed GBPF), unspecified = -usdsOut (hook owes USDS).
+        // exactOutput: specified = -usdsOut (hook owes USDS), unspecified = +gbpfIn (hook owed GBPF).
+        return (
+            IHooks.beforeSwap.selector,
+            _buildDelta(isExactInput ? gbpfIn : usdsOut, isExactInput ? usdsOut : gbpfIn, isExactInput),
+            0
+        );
+    }
+
+    /// @dev Pack a BeforeSwapDelta from the two leg amounts. `specifiedAmount` is the amount of the
+    ///      user-specified token; on exact-input the hook is OWED it (positive specified delta), on
+    ///      exact-output the hook OWES it (negative specified delta). `unspecifiedAmount` is the
+    ///      opposite leg and takes the opposite sign. This consolidates the four sign cases shared
+    ///      by mint and redeem and keeps the handlers under the via-IR stack limit.
+    function _buildDelta(uint256 specifiedAmount, uint256 unspecifiedAmount, bool isExactInput)
+        internal
+        pure
+        returns (BeforeSwapDelta)
+    {
         int128 specifiedDelta;
         int128 unspecifiedDelta;
         if (isExactInput) {
-            specifiedDelta = _toPositiveInt128(gbpfIn);
-            unspecifiedDelta = -_toPositiveInt128(usdsOut);
+            specifiedDelta = _toPositiveInt128(specifiedAmount);
+            unspecifiedDelta = -_toPositiveInt128(unspecifiedAmount);
         } else {
-            specifiedDelta = -_toPositiveInt128(usdsOut);
-            unspecifiedDelta = _toPositiveInt128(gbpfIn);
+            specifiedDelta = -_toPositiveInt128(specifiedAmount);
+            unspecifiedDelta = _toPositiveInt128(unspecifiedAmount);
         }
-        return (IHooks.beforeSwap.selector, toBeforeSwapDelta(specifiedDelta, unspecifiedDelta), 0);
+        return toBeforeSwapDelta(specifiedDelta, unspecifiedDelta);
     }
 
     // ============================================================================================
