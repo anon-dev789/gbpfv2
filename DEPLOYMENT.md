@@ -65,6 +65,19 @@ eth_call against the live instance). The BufferVault also uses `update()`.
 
 **Beneficiary multisig (immutable in Vault):** `0x621D531A97185BcB5f3E513C192a3327163377D3`
 
+### Canonical V4 pool (the protocol's swap pool, bound to the Hook)
+
+**PoolId:** `0xdf1da6c81bc6ce11acafdf6e6a80c5af1695421e36d6f80ee930474aece9ff04`
+
+PoolKey: `{ currency0: GBPF 0x1817FD23ceF7Da47DF934fdc880d72e653786770, currency1: USDS
+0x820C137fa70C8691f0e44Dc420a5e53c168921Dc, fee: 0, tickSpacing: 1, hooks:
+0x5613c279E8Db9815DBD0CdFbd10515EAbD350088 }` — PoolId = keccak256(abi.encode(PoolKey)),
+equal to the Hook's immutable `POOL_KEY_HASH`.
+
+Note the ordering: **GBPF is currency0** (lower address), so a mint (USDS→GBPF) swap has
+`zeroForOne = false` and a redeem (GBPF→USDS) has `zeroForOne = true`. Initialised at
+sqrtPriceX96 = 2^96 (placeholder — the hook prices from the oracle, not pool state).
+
 ## Deploy metadata
 
 - **Source commit:** `60d3895` ("ran audit and fixed" — post-audit fixes across all 4 contracts)
