@@ -1,0 +1,47 @@
+name: Keeper
+
+# The GBPF heartbeat: every 15 minutes, repeg the Gateway pool (BufferVault.rebalance)
+# and realise core backing (Vault.flush). Both calls are permissionless; the keeper
+# wallet only pays gas. script/keeper.sh pre-checks via eth_call and skips no-ops, so
+# most runs send nothing and cost nothing on-chain.
+#
+# Setup (one-time):
+#   1. Create a dedicated keeper wallet:  cast wallet new
+#   2. Fund it with a little ETH on Base (~0.001 ETH lasts months at Base gas prices).
+#   3. Add its private key as the KEEPER_PRIVATE_KEY repository secret.
+#   Optional: set a BASE_RPC_URL secret for a private RPC (defaults to mainnet.base.org).
+#
+# Note: GitHub cron is best-effort (runs can be delayed under load). That is acceptable —
+# rebalance() is permissionless and profitable, so anyone can fill gaps; a late flush only
+# delays yield accrual, never correctness.
+
+permissions: {}
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: keeper
+  cancel-in-progress: false
+
+jobs:
+  keep:
+    name: rebalance + flush
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Run keeper
+        env:
+          KEEPER_PRIVATE_KEY: ${{ secrets.KEEPER_PRIVATE_KEY }}
+          BASE_RPC_URL: ${{ secrets.BASE_RPC_URL }}
+        run: ./script/keeper.sh
