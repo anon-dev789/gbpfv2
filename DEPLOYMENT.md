@@ -18,9 +18,19 @@ see "Gateway deployment" below.
   then call `rebalance()`. Withdraw: `exitAndWithdrawAll(to)` from the owner wallet.
 - Peg upkeep: permissionless `BufferVault.rebalance()` on a heartbeat (pair with core
   `Vault.flush()`). Keeper not yet stood up.
-- Txs: createPool `0x35157625…25c7`, initialize `0xd7ffe18d…6b5085`, BufferVault deploy
-  `0xe6066bc5…f3f0b3`, fund `0xb9966212…edb274`, seed rebalance `0xe93fd30f…194fd1`
-  (blocks 47173762–47173768). Artifact: `broadcast/GatewayDeploy.s.sol/8453/run-latest.json`.
+### Gateway transaction hashes (blocks 47173762–47173768)
+
+| Step | Action | Tx hash |
+|------|--------|---------|
+| 1 | Factory.createPool (V3 GBPF/USDS 0.05%) | `0x35157625e0bb6399036fbd6886a1bc4a2d00ed4e58fe49269d21068aa4d225c7` |
+| 2 | Pool.initialize @ 1.34037 | `0xd7ffe18d8fb944283b2826cd6865513a6b8dbe87125ffc3f533ac2baef6b5085` |
+| 3 | BufferVault (deploy) | `0xe6066bc5476e98b25aacf0e4e770f7d62f61510cfa2170909b12a43a70f3f0b3` |
+| 4 | USDS.transfer 0.1 to BufferVault | `0xb996621277a291ad8d1d41cf7b807c4e8078bdc76c4f2ff7a2c54ec963edb274` |
+| 5 | BufferVault.rebalance (seed: hook mint + band) | `0xe93fd30fa29528ab2dd9b424937cbee389a60797e13ccb0be82f2d26f3194fd1` |
+
+Artifact: `broadcast/GatewayDeploy.s.sol/8453/run-latest.json`.
+Seed rebalance token flow (decoded from tx 5): hook minted 0.037237 GBPF for 0.05 USDS;
+band holds 0.028638 GBPF + 0.05 USDS; 0.008599 GBPF remains in the vault as working inventory.
 
 ## ⚠️ Known quirk in the LIVE OracleAdapter: preview() TWAP
 
