@@ -22,3 +22,7 @@ docs/
 .env
 .env.*
 !.env.example
+
+# Reference copies of the separate Freehold project — not part of this repo.
+/freehold/
+/freehold_full/

@@ -5,4 +5,4 @@
 # To activate, set SAFEHOUSE_TRUST_WORKDIR_CONFIG=1 in your shell, or pass
 # --trust-workdir-config to safehouse, or alias claude accordingly.
 
-add-dirs-ro=/Users/charliep/.local/bin:/Users/charliep/.local/share/uv
+add-dirs-ro=/Users/charliep/.local/bin:/Users/charliep/.local/share/uv:/Users/charliep/freehold

@@ -2,6 +2,40 @@
 
 **Status:** ✅ LIVE on Base (chain 8453). Contracts deployed + initialized, and the
 seed-and-burn bootstrap (pool init + seed swap + burn) completed. The protocol is open for use.
+The **Gateway** (public V3 GBPF/USDS pool + BufferVault, see GATEWAY_DESIGN.md) is also live —
+see "Gateway deployment" below.
+
+## Gateway deployment (2026-06-11, periphery — NOT part of the immutable core)
+
+| Component | Address |
+|---|---|
+| Gateway pool (Uniswap V3 GBPF/USDS, 0.05%) | `0xd478Ae80D8Af91b39A100d8bC55C2219dA17df7e` |
+| BufferVault (owner = deployer EOA) | `0x6aB1571CCd465568612a8a306490385CbF58B7EC` |
+
+- Pool initialised at oracle price 1.34037 USDS/GBPF; seed rebalance deployed the ±30bp band
+  (position tokenId 5310273) and pinned spot to the oracle tick (2929) — verified on-chain.
+- Initial funding: 0.1 USDS (smoke scale). Add capital: transfer GBPF/USDS to the BufferVault,
+  then call `rebalance()`. Withdraw: `exitAndWithdrawAll(to)` from the owner wallet.
+- Peg upkeep: permissionless `BufferVault.rebalance()` on a heartbeat (pair with core
+  `Vault.flush()`). Keeper not yet stood up.
+- Txs: createPool `0x35157625…25c7`, initialize `0xd7ffe18d…6b5085`, BufferVault deploy
+  `0xe6066bc5…f3f0b3`, fund `0xb9966212…edb274`, seed rebalance `0xe93fd30f…194fd1`
+  (blocks 47173762–47173768). Artifact: `broadcast/GatewayDeploy.s.sol/8453/run-latest.json`.
+
+## ⚠️ Known quirk in the LIVE OracleAdapter: preview() TWAP
+
+The deployed (immutable) OracleAdapter's `preview()` view returns an **amplified TWAP** when a
+new Chainlink observation exists that (a) has not been ingested on-chain (ingestion happens via
+`update()`, i.e. on swaps) and (b) is older than the 5-minute TWAP window. A 0.072% feed step,
+un-ingested for ~10h, previewed as +8.2% (observed live 2026-06-10/11). Root cause and fix:
+`_previewTwap` window-start interpolation; fixed in source (post-deploy) with regression tests
+in `test/OracleAdapterPreviewRegression.t.sol`.
+
+**Impact: none on-chain.** The hook prices swaps via `update()`, which is correct (verified by
+eth_call against the live instance). The BufferVault also uses `update()`.
+**Rule for off-chain consumers/tooling: do NOT consume the live `preview()` twapWad; use
+`latestPriceWad()` or an eth_call-simulated `update()` instead.** (The `healthy` flag of
+`preview()` is unaffected and fine to use.)
 
 > **Current deployment is the post-audit redeploy (commit `60d3895`).** An earlier deployment
 > (commit `53980bf`) was abandoned after the audit; its addresses are recorded under

@@ -366,7 +366,26 @@ contract OracleAdapter {
 
         uint256 nowTs = block.timestamp;
         uint256 targetTs = nowTs > TWAP_WINDOW ? nowTs - TWAP_WINDOW : 0;
-        (uint256 oldCum, uint256 oldTs) = _interpolateAt(targetTs);
+
+        // _interpolateAt only knows STORED snapshots. If the virtually-ingested observation is
+        // older than the window start, the whole averaging window lies inside the segment priced
+        // at previewAnswer — but _interpolateAt would extend the STORED price all the way to
+        // targetTs, undercounting oldCum and inflating the TWAP by
+        // (new − old) * (targetTs − previewUpdatedAt) / window: unbounded amplification of an
+        // arbitrarily small price step. (Observed on the live Base instance: a 0.07% feed step,
+        // un-ingested for ~10h because no swap had run update(), was previewed as a +8% TWAP.)
+        // Compute oldCum piecewise across the virtual observation instead.
+        uint256 oldCum;
+        uint256 oldTs;
+        bool virtuallyIngested = previewUpdatedAt > _lastChainlinkUpdatedAt && _lastChainlinkUpdatedAt != 0;
+        if (virtuallyIngested && targetTs >= previewUpdatedAt && previewUpdatedAt >= uint256(head.timestamp)) {
+            uint256 cumAtObservation = uint256(head.cumulativeWadSeconds) + _toWad(_lastChainlinkAnswer)
+                * (previewUpdatedAt - uint256(head.timestamp));
+            oldCum = cumAtObservation + _toWad(previewAnswer) * (targetTs - previewUpdatedAt);
+            oldTs = targetTs;
+        } else {
+            (oldCum, oldTs) = _interpolateAt(targetTs);
+        }
 
         uint256 elapsed = nowTs - oldTs;
         if (elapsed == 0) {
