@@ -32,6 +32,40 @@ Artifact: `broadcast/GatewayDeploy.s.sol/8453/run-latest.json`.
 Seed rebalance token flow (decoded from tx 5): hook minted 0.037237 GBPF for 0.05 USDS;
 band holds 0.028638 GBPF + 0.05 USDS; 0.008599 GBPF remains in the vault as working inventory.
 
+## Batchers deployment (2026-06-20, periphery — NOT part of the immutable core)
+
+Gas-amortising aggregators on top of the V4 hook: users pool one token, a permissionless
+"runner" triggers one batched swap, everyone is paid back pro-rata, and the runner is reimbursed
+in ETH from a self-funding gas tank (per-depositor + shared-fixed fee → USDS→USDC→WETH→ETH). See
+BATCHMINTER_DESIGN.md and `script/BatchDeploy.s.sol`.
+
+| Component | Address |
+|---|---|
+| BatchMinter (USDS → GBPF, owner = deployer EOA) | `0xD16D00e3eA0295cB5fCDB9e381171c8f7B101670` |
+| BatchRedeemer (GBPF → USDS, owner = deployer EOA) | `0x7dd7cCd4BAb1494a274b95474b7d369717e2c188` |
+
+- **Owner (immutable, both):** `0x398CA93b76806D3517DD3520F1aE09620Fcb5c24`. Owner powers are
+  capped tuning (`setParams`) + stray rescue + ETH tank withdraw; it cannot touch queued deposits
+  or escrowed (`claimable`) funds.
+- Both bind to the live core: Hook `0x5613…0088`, GBPF `0x1817…6770`, USDS `0x820C…21Dc`, and
+  (redeemer only) Vault `0xA9a8…3498`. Fee route uses PSM3 `0x1601…347E` →
+  USDC `0x8335…2913` → Uniswap V3 USDC/WETH pool `0xd0b5…F224` → WETH `0x4200…0006`.
+- **Default params:** `feeUsds` 0.05, `fixedFeeUsds` 0.10, `bonusBps` 2000, `maxDepositors` 150;
+  redeemer `minGbpfDeposit` 0.2. Tunable via `setParams` (caps: 5 USDS / 20 USDS / 100% / 500).
+- Deployed with **no ETH seed** — the first batch funds its own runner payout (fees are swapped
+  to ETH before the runner is paid). Top up anytime via `fundTank()` or a plain ETH send.
+- **Verified on Basescan** (both). Verify command: see `script/BatchDeploy.s.sol` header.
+- Idle until a runner calls `executeBatch` — no keeper stood up yet.
+
+### Batchers transaction hashes
+
+| Contract | Tx hash | Block |
+|---|---|---|
+| BatchMinter | `0x6dbe5ae2c9269219903f2aa199eec16ce932be920e11ed2750e64a3b472f9dd5` | 47553893 |
+| BatchRedeemer | `0x99abd7871adaa159b2dea52bcabb8b61ca1911ac21624a4dbeefa64d12c4d80a` | 47553895 |
+
+Artifact: `broadcast/BatchDeploy.s.sol/8453/run-latest.json`. Total deploy cost 0.0000289 ETH.
+
 ## ⚠️ Known quirk in the LIVE OracleAdapter: preview() TWAP
 
 The deployed (immutable) OracleAdapter's `preview()` view returns an **amplified TWAP** when a
