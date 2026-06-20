@@ -155,6 +155,54 @@ Caps are enforced in the setters so the owner can never charge more than 5 USDS/
   expected (e.g. oracle moved); an oracle-paused hook reverts the whole batch and deposits stay
   safely queued.
 
+## Forwarder model (send-and-forget): `ForwarderMinter` / `ForwarderRedeemer`
+
+The `deposit()`-based `BatchMinter`/`BatchRedeemer` require the user to make a contract call (and
+an approve). The forwarder variants remove that entirely: **the user's only action is a plain
+token transfer to an address** — no approve, no contract call, no trust in the batcher. This is
+the UX of an exchange deposit, made trustless.
+
+### How attribution works without a deposit() call
+
+A contract cannot read who sent it a plain ERC20 transfer — transfers don't call the recipient,
+and the EVM cannot read its own `Transfer` event logs. So provenance is moved into something the
+contract *can* read: **the address itself.**
+
+Each user has a deterministic deposit address `F = CREATE2(factory, salt = userAddress,
+Forwarder initcode)` (`depositAddressOf(user)`). The user sends the deposit token to `F` (plain
+transfer). Funds at `F` are provably theirs because only the factory, with the fixed `Forwarder`
+initcode and the user's salt, can produce `F` — nobody can deploy different code there or
+redirect the funds.
+
+### Flow
+
+- **Deposit:** user reads `depositAddressOf(me)` (free view / frontend) and sends the token there.
+- **Sweep + run (permissionless):** a runner calls `sweepAndExecute(address[] users, minOut)`.
+  For each user it recomputes `F`, and if `balanceOf(F) > 0` deploys the `Forwarder` there (first
+  time) or `flush()`es it (after) — pulling the token into the factory **credited to that user**.
+  Then it's the existing batch: hook swap, pro-rata distribution (push-with-escrow), fee→ETH,
+  runner reimbursement. There is **no persistent queue** — deposits live at the forwarder
+  addresses until the atomic sweep, so per-user amounts are in memory, not storage.
+- **Escape hatch:** `refund(user)` sweeps `F` and returns the token straight to the user (no
+  swap, no fee). Permissionless — it can only ever return funds to their owner.
+
+### Properties
+
+- **Trustless attribution.** A malicious runner picks *which* users to include but can't reassign
+  funds — sweeping `F` always credits the user `F` encodes (test: `test_runner_cannot_misattribute`).
+  Censorship is moot (anyone else can sweep). The owner can't touch user funds (they're at
+  forwarder addresses, not the factory) nor escrowed `claimable` (reserved by `totalClaimable`).
+- **Reusable addresses.** The forwarder is deployed once per user and `flush()`ed thereafter, so
+  the same deposit address works across every batch.
+- **Discovery is the one off-chain piece.** The factory can't enumerate depositors (same
+  log-blindness), so the runner supplies the candidate `users[]` — known to any frontend (it
+  computed each user's address) or an indexer. The on-chain part — attribution + payout — is
+  fully trustless; only "which addresses to check" is off-chain.
+
+Fee model, gas-tank, owner caps, and the USDS→USDC→WETH→ETH route are identical to the
+deposit-based contracts. Both pairs are kept: forwarders for send-and-forget end users, the
+`deposit()` pair for contract integrators that want an explicit call.
+
 ## BatchRedeemer (the reverse): GBPF → USDS
 
 `BatchRedeemer` is the mirror image — depositors queue **GBPF**, one batched redeem returns

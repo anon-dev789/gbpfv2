@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Get GBPF — swap USDS for GBP stablecoin</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #ffffff;
+    --bg2: #f5f5f3;
+    --bg3: #eeede8;
+    --text: #1a1a18;
+    --text2: #5f5e5a;
+    --text3: #888780;
+    --border: rgba(0,0,0,0.12);
+    --border2: rgba(0,0,0,0.22);
+    --teal: #0F6E56;
+    --teal-bg: #E1F5EE;
+    --teal-text: #085041;
+    --amber: #854F0B;
+    --amber-bg: #FAEEDA;
+    --amber-text: #633806;
+    --danger: #A32D2D;
+    --danger-bg: #FCEBEB;
+    --danger-text: #791F1F;
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a18;
+      --bg2: #242422;
+      --bg3: #2c2c2a;
+      --text: #f0efe8;
+      --text2: #b4b2a9;
+      --text3: #888780;
+      --border: rgba(255,255,255,0.12);
+      --border2: rgba(255,255,255,0.22);
+      --teal-bg: #085041;
+      --teal-text: #9FE1CB;
+      --amber-bg: #633806;
+      --amber-text: #FAC775;
+      --danger-bg: #791F1F;
+      --danger-text: #F7C1C1;
+    }
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg3);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 2rem 1rem;
+    line-height: 1.6;
+  }
+
+  .page { max-width: 540px; margin: 0 auto; }
+
+  .wordmark {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    color: var(--text3);
+    text-transform: uppercase;
+    margin-bottom: 1.5rem;
+  }
+
+  h1 { font-size: 28px; font-weight: 500; margin-bottom: 6px; color: var(--text); }
+  .subtitle { font-size: 15px; color: var(--text2); margin-bottom: 1.75rem; }
+
+  .card {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+  }
+
+  .label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+
+  input[type="text"] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: 'SF Mono', 'Fira Mono', monospace;
+    background: var(--bg2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  input[type="text"]:focus { border-color: var(--border2); }
+  input[type="text"]::placeholder { color: var(--text3); }
+
+  input[type="number"] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 15px;
+    background: var(--bg2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    outline: none;
+  }
+  input[type="number"]:focus { border-color: var(--border2); }
+
+  button.primary {
+    width: 100%;
+    padding: 11px 16px;
+    font-size: 15px;
+    font-weight: 500;
+    background: var(--text);
+    color: var(--bg);
+    border: none;
+    border-radius: var(--radius);
+    cursor: pointer;
+    margin-top: 12px;
+    transition: opacity 0.15s;
+  }
+  button.primary:hover { opacity: 0.85; }
+  button.primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  button.ghost {
+    padding: 6px 12px;
+    font-size: 13px;
+    background: transparent;
+    color: var(--text2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button.ghost:hover { background: var(--bg2); }
+
+  .divider { border: none; border-top: 0.5px solid var(--border); margin: 1.25rem 0; }
+
+  .addr-box {
+    background: var(--bg2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-family: 'SF Mono', 'Fira Mono', monospace;
+    font-size: 12px;
+    word-break: break-all;
+    color: var(--text);
+    line-height: 1.5;
+  }
+
+  .qr-center { display: flex; justify-content: center; padding: 1.25rem 0 0.75rem; }
+  .qr-center canvas, .qr-center img { border-radius: var(--radius); }
+
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 1rem; }
+  .stat {
+    background: var(--bg2);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+  }
+  .stat-label { font-size: 11px; color: var(--text3); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-value { font-size: 18px; font-weight: 500; color: var(--text); }
+  .stat-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
+
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+  }
+  .pill-teal { background: var(--teal-bg); color: var(--teal-text); }
+  .pill-amber { background: var(--amber-bg); color: var(--amber-text); }
+  .pill-danger { background: var(--danger-bg); color: var(--danger-text); }
+
+  .step-list { list-style: none; }
+  .step-list li {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 8px 0;
+    font-size: 14px;
+    color: var(--text2);
+    border-bottom: 0.5px solid var(--border);
+  }
+  .step-list li:last-child { border-bottom: none; }
+  .step-num {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--bg2); border: 0.5px solid var(--border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 500; color: var(--text3);
+    flex-shrink: 0; margin-top: 1px;
+  }
+
+  .rate-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 0; font-size: 14px;
+    border-bottom: 0.5px solid var(--border);
+  }
+  .rate-row:last-child { border-bottom: none; }
+  .rate-key { color: var(--text2); }
+  .rate-val { font-weight: 500; color: var(--text); }
+
+  .error-msg {
+    font-size: 13px;
+    color: var(--danger);
+    margin-top: 6px;
+    display: none;
+  }
+
+  .oracle-status {
+    font-size: 13px;
+    color: var(--text3);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--bg3); flex-shrink: 0;
+  }
+  .dot-green { background: #1D9E75; }
+  .dot-red { background: #E24B4A; }
+  .dot-amber { background: #EF9F27; }
+
+  .copy-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .copy-row .addr-box { flex: 1; }
+
+  .warning-box {
+    background: var(--amber-bg);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--amber-text);
+    margin-top: 1rem;
+    display: none;
+  }
+
+  .result-section { display: none; }
+
+  footer {
+    margin-top: 2rem;
+    font-size: 12px;
+    color: var(--text3);
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <p class="wordmark">GBPF</p>
+  <h1>Swap USDS for GBPF</h1>
+  <p class="subtitle">Enter your wallet. Send USDS to your personal deposit address. GBPF arrives in your wallet within ~5 minutes.</p>
+
+  <div class="card">
+    <div class="label">Your Base wallet address</div>
+    <input type="text" id="wallet-input" placeholder="0x…" spellcheck="false" autocomplete="off" />
+    <p class="error-msg" id="addr-error">Please enter a valid Base wallet address.</p>
+    <button class="primary" id="go-btn" onclick="handleGo()">Get my deposit address</button>
+  </div>
+
+  <div class="card result-section" id="result-section">
+    <div class="label">Your USDS deposit address</div>
+    <div class="copy-row">
+      <div class="addr-box" id="cf-address">—</div>
+      <button class="ghost" onclick="copyAddr()" title="Copy address">Copy</button>
+    </div>
+    <div class="qr-center"><div id="qr-code"></div></div>
+
+    <div class="divider"></div>
+
+    <div class="label">Estimate your swap</div>
+    <input type="number" id="amount-input" placeholder="Amount of USDS to send" min="0" step="any" oninput="updateQuote()" style="margin-bottom: 10px;" />
+    <div id="quote-rows">
+      <div class="rate-row"><span class="rate-key">You send</span><span class="rate-val" id="q-send">—</span></div>
+      <div class="rate-row"><span class="rate-key">You receive</span><span class="rate-val" id="q-receive">—</span></div>
+      <div class="rate-row"><span class="rate-key">Rate (USDS per GBPF)</span><span class="rate-val" id="q-rate">—</span></div>
+      <div class="rate-row"><span class="rate-key">Fee (20bp execution)</span><span class="rate-val" id="q-fee">—</span></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <ul class="step-list">
+      <li><div class="step-num">1</div><span>Send any amount of USDS to the deposit address above on Base.</span></li>
+      <li><div class="step-num">2</div><span>Our keeper detects the deposit and executes the swap to GBPF on your behalf.</span></li>
+      <li><div class="step-num">3</div><span>GBPF arrives in your wallet. A small fee (20bp) is deducted to cover execution.</span></li>
+    </ul>
+  </div>
+
+  <div class="card" id="rate-card">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 10px;">
+      <span style="font-size:14px; font-weight:500;">Live protocol rate</span>
+      <button class="ghost" onclick="fetchRate()">Refresh</button>
+    </div>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="stat-label">Oracle TWAP</div>
+        <div class="stat-value" id="s-twap">—</div>
+        <div class="stat-sub">USDS per GBP</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Vault solvency</div>
+        <div class="stat-value" id="s-solvency">—</div>
+        <div class="stat-sub" id="s-solvency-state">loading…</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Spread</div>
+        <div class="stat-value" id="s-spread">—</div>
+        <div class="stat-sub">health surcharge</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Mint price</div>
+        <div class="stat-value" id="s-mint">—</div>
+        <div class="stat-sub">USDS per GBPF</div>
+      </div>
+    </div>
+    <div class="oracle-status">
+      <div class="dot" id="oracle-dot"></div>
+      <span id="oracle-status-text">Fetching oracle…</span>
+    </div>
+    <div class="warning-box" id="oracle-paused">
+      Oracle reports unhealthy — swaps are currently paused. Please check back shortly.
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+      <span style="font-size:14px; font-weight:500;">Changed your mind?</span>
+      <span class="pill pill-teal" style="margin-bottom:0;">Full refund available</span>
+    </div>
+    <p style="font-size:14px; color:var(--text2); margin-bottom:12px; line-height:1.6;">Your USDS sits untouched at your deposit address until the batch runs. If you want it back beforehand, call <code style="font-size:12px; background:var(--bg2); padding:2px 5px; border-radius:4px;">refund()</code> on the ForwarderMinter contract — it returns the full amount with no fee deducted.</p>
+
+    <div class="label">How to get a refund</div>
+    <ul class="step-list" style="margin-bottom:12px;">
+      <li><div class="step-num">1</div><span>Go to the ForwarderMinter contract on Basescan (link below) and open the <strong style="font-weight:500;">Write Contract</strong> tab.</span></li>
+      <li><div class="step-num">2</div><span>Connect your wallet using the "Connect to Web3" button on Basescan.</span></li>
+      <li><div class="step-num">3</div><span>Find the <code style="font-size:12px; background:var(--bg2); padding:2px 5px; border-radius:4px;">refund</code> function and enter your wallet address as the <code style="font-size:12px; background:var(--bg2); padding:2px 5px; border-radius:4px;">user</code> parameter.</span></li>
+      <li><div class="step-num">4</div><span>Submit the transaction. Your full USDS balance is returned immediately to your wallet.</span></li>
+    </ul>
+
+    <div style="background:var(--bg2); border-radius:var(--radius); padding:10px 12px; margin-bottom:12px;">
+      <div class="label" style="margin-bottom:4px;">ForwarderMinter contract</div>
+      <div style="font-family:'SF Mono','Fira Mono',monospace; font-size:12px; color:var(--text); word-break:break-all;" id="forwarder-addr">TODO: ForwarderMinter address</div>
+    </div>
+
+    <a id="basescan-link" href="#" style="display:inline-block; font-size:13px; color:var(--text2); text-decoration:none; border:0.5px solid var(--border); border-radius:var(--radius); padding:6px 12px;">View on Basescan &rarr;</a>
+
+    <div style="margin-top:12px; padding:10px 12px; background:var(--amber-bg); border-radius:var(--radius); font-size:13px; color:var(--amber-text);">
+      If the batch has already swept your deposit, <code style="font-size:12px; background:rgba(0,0,0,0.08); padding:2px 5px; border-radius:4px;">refund()</code> will revert with <code style="font-size:12px; background:rgba(0,0,0,0.08); padding:2px 5px; border-radius:4px;">NothingToDo</code> — meaning your GBPF is already on its way. It is always safe to try.
+    </div>
+  </div>
+
+  <footer>GBPF — GBP-pegged stablecoin on Base &middot; <a href="https://scrubbed.finance" style="color:inherit;">scrubbed scrubbed Ltd</a></footer>
+</div>
+
+<script>
+const BASE_RPC = 'https://mainnet.base.org';
+
+const ORACLE = '0x9c66F3F8a102d6Bf3EeaEAAe5d9ECAe88985eB2F';
+const VAULT  = '0xA9a831a348D0Db372cf75dd7C082cFF67A453498';
+const GBPF   = '0x1817FD23ceF7Da47DF934fdc880d72e653786770';
+
+const SEL_UPDATE           = '0xa2e62045';
+const SEL_PREVIEW_SOLVENCY = '0xf392169c';
+const SEL_TOTAL_SUPPLY     = '0x18160ddd';
+
+const S_MAX    = 0.05;
+const D_50     = 0.05;
+const FLAT_FEE = 0.002;
+const WAD = BigInt('1000000000000000000');
+const RAY = BigInt('1000000000000000000000000000');
+const MAX_SOL = WAD * BigInt(10);
+
+const TODO_FACTORY           = '0x0000000000000000000000000000000000000000'; // TODO: replace with factory address
+const TODO_INIT_CODE_HASH    = '0x0000000000000000000000000000000000000000000000000000000000000000'; // TODO: replace with keccak256 of init bytecode
+const TODO_FORWARDER_MINTER  = null; // TODO: replace with ForwarderMinter address on Base mainnet
+
+let liveRate = null;
+let lastCfAddr = '';
+
+async function ethCall(to, data) {
+  const body = JSON.stringify({
+    jsonrpc: '2.0', id: 1,
+    method: 'eth_call',
+    params: [{ to, data }, 'latest']
+  });
+  const r = await fetch(BASE_RPC, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body
+  });
+  const j = await r.json();
+  if (j.error) throw new Error(j.error.message);
+  return j.result;
+}
+
+function words(hex) {
+  const h = hex.startsWith('0x') ? hex.slice(2) : hex;
+  const out = [];
+  for (let i = 0; i < h.length; i += 64) out.push(BigInt('0x' + h.slice(i, i+64)));
+  return out;
+}
+
+function mulDiv(a, b, d) { return (a * b) / d; }
+
+function computeSolvency(sUsds, pendingBen, ssrRate, usdsClaim, twap, supply) {
+  const principal = sUsds > pendingBen ? sUsds - pendingBen : 0n;
+  const totalUsds = mulDiv(principal, ssrRate, RAY) + usdsClaim;
+  const colGbp    = mulDiv(totalUsds, WAD, twap);
+  const sol       = mulDiv(colGbp, WAD, supply);
+  return sol > MAX_SOL ? MAX_SOL : sol;
+}
+
+function spreadFn(solvency) {
+  const d = 1.0 - solvency;
+  if (d === 0) return 0;
+  const arg = (d / D_50) ** 2;
+  const mag = S_MAX * Math.tanh(arg);
+  return d > 0 ? mag : -mag;
+}
+
+async function fetchRate() {
+  const dotEl = document.getElementById('oracle-dot');
+  const statusEl = document.getElementById('oracle-status-text');
+  dotEl.className = 'dot dot-amber';
+  statusEl.textContent = 'Fetching…';
+
+  try {
+    const [oracleRaw, vaultRaw, supplyRaw] = await Promise.all([
+      ethCall(ORACLE, SEL_UPDATE),
+      ethCall(VAULT,  SEL_PREVIEW_SOLVENCY),
+      ethCall(GBPF,   SEL_TOTAL_SUPPLY)
+    ]);
+
+    const ow = words(oracleRaw);
+    const twapWad = ow[0];
+    const healthy = ow[1] !== 0n;
+
+    const vw = words(vaultRaw);
+    const sUsds = vw[0], pendingBen = vw[1], ssrRate = vw[2], usdsClaim = vw[3];
+
+    const supply = words(supplyRaw)[0];
+
+    const solvencyWad = supply === 0n ? WAD : computeSolvency(sUsds, pendingBen, ssrRate, usdsClaim, twapWad, supply);
+    const solvency    = Number(solvencyWad) / Number(WAD);
+    const twap        = Number(twapWad) / Number(WAD);
+    const sp          = spreadFn(solvency);
+    const mintPrice   = twap * (1 + sp + FLAT_FEE);
+
+    liveRate = { twap, solvency, sp, mintPrice, healthy };
+
+    document.getElementById('s-twap').textContent     = twap.toFixed(4);
+    document.getElementById('s-solvency').textContent = (solvency * 100).toFixed(2) + '%';
+    document.getElementById('s-spread').textContent   = (sp * 10000).toFixed(1) + ' bp';
+    document.getElementById('s-mint').textContent     = mintPrice.toFixed(4);
+
+    const solEl = document.getElementById('s-solvency-state');
+    const diff = Math.abs(solvency - 1);
+    if (diff < 0.0001) {
+      solEl.textContent = 'fully backed';
+      solEl.style.color = '#1D9E75';
+    } else if (solvency > 1) {
+      solEl.textContent = 'surplus';
+      solEl.style.color = '#1D9E75';
+    } else {
+      solEl.textContent = 'shortfall';
+      solEl.style.color = '#E24B4A';
+    }
+
+    document.getElementById('oracle-paused').style.display = healthy ? 'none' : 'block';
+
+    if (healthy) {
+      dotEl.className = 'dot dot-green';
+      statusEl.textContent = 'Oracle healthy · updated just now';
+    } else {
+      dotEl.className = 'dot dot-red';
+      statusEl.textContent = 'Oracle unhealthy — swaps paused';
+    }
+
+    updateQuote();
+  } catch(e) {
+    dotEl.className = 'dot dot-red';
+    statusEl.textContent = 'Could not reach oracle: ' + e.message;
+  }
+}
+
+function getCreate2Address(sender) {
+  try {
+    const salt = ethers.zeroPadValue(sender, 32);
+    return ethers.getCreate2Address(TODO_FACTORY, salt, TODO_INIT_CODE_HASH);
+  } catch(e) {
+    return null;
+  }
+}
+
+function handleGo() {
+  const raw = document.getElementById('wallet-input').value.trim();
+  const errEl = document.getElementById('addr-error');
+  errEl.style.display = 'none';
+
+  let addr;
+  try { addr = ethers.getAddress(raw); }
+  catch(e) { errEl.style.display = 'block'; return; }
+
+  const cf = getCreate2Address(addr);
+  if (!cf) { errEl.style.display = 'block'; return; }
+
+  lastCfAddr = cf;
+  document.getElementById('cf-address').textContent = cf;
+
+  const qrEl = document.getElementById('qr-code');
+  qrEl.innerHTML = '';
+  new QRCode(qrEl, {
+    text: cf,
+    width: 176,
+    height: 176,
+    colorDark: '#1a1a18',
+    colorLight: '#ffffff',
+    correctLevel: QRCode.CorrectLevel.M
+  });
+
+  document.getElementById('result-section').style.display = 'block';
+  updateQuote();
+}
+
+function updateQuote() {
+  const amt = parseFloat(document.getElementById('amount-input').value);
+  if (!liveRate || isNaN(amt) || amt <= 0) {
+    ['q-send','q-receive','q-rate','q-fee'].forEach(id => {
+      document.getElementById(id).textContent = '—';
+    });
+    return;
+  }
+  const gbpfOut = amt / liveRate.mintPrice;
+  const fee = amt * FLAT_FEE;
+  document.getElementById('q-send').textContent    = amt.toFixed(2) + ' USDS';
+  document.getElementById('q-receive').textContent = gbpfOut.toFixed(4) + ' GBPF';
+  document.getElementById('q-rate').textContent    = liveRate.mintPrice.toFixed(4);
+  document.getElementById('q-fee').textContent     = fee.toFixed(4) + ' USDS';
+}
+
+function copyAddr() {
+  if (!lastCfAddr) return;
+  navigator.clipboard.writeText(lastCfAddr).then(() => {
+    const btn = event.target;
+    const orig = btn.textContent;
+    btn.textContent = 'Copied';
+    setTimeout(() => btn.textContent = orig, 1500);
+  }).catch(() => {});
+}
+
+document.getElementById('wallet-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') handleGo();
+});
+
+fetchRate();
+setInterval(fetchRate, 60000);
+
+const fmAddrEl = document.getElementById('forwarder-addr');
+const fmLinkEl = document.getElementById('basescan-link');
+if (TODO_FORWARDER_MINTER) {
+  fmAddrEl.textContent = TODO_FORWARDER_MINTER;
+  fmLinkEl.href = 'https://basescan.org/address/' + TODO_FORWARDER_MINTER + '#writeContract';
+} else {
+  fmAddrEl.textContent = 'TODO: ForwarderMinter address — coming soon';
+  fmLinkEl.style.display = 'none';
+}
+</script>
+</body>
+</html>
