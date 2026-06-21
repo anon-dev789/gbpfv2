@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook: run `forge fmt` on staged Solidity files so commits never fail
+# CI's `forge fmt --check`. Enable once per clone with:
+#
+#   git config core.hooksPath .githooks
+#
+set -euo pipefail
+
+if ! command -v forge >/dev/null 2>&1; then
+  echo "pre-commit: forge not found; skipping fmt (install Foundry to enable)" >&2
+  exit 0
+fi
+
+# Collect staged (added/copied/modified) .sol files, NUL-delimited for safe paths.
+# Portable to bash 3.2 (macOS default) — no mapfile.
+sol_files=()
+while IFS= read -r -d '' f; do
+  sol_files+=("$f")
+done < <(git diff --cached --name-only --diff-filter=ACM -z -- '*.sol')
+
+# Nothing to format.
+[ ${#sol_files[@]} -eq 0 ] && exit 0
+
+# Format in place, then re-stage so the formatted version is what gets committed.
+forge fmt "${sol_files[@]}"
+git add -- "${sol_files[@]}"
