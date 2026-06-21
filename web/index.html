@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Get GBPF — swap USDS for GBP stablecoin</title>
+<title>GBPF — swap USDS ⇄ GBPF on Base</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <style>
@@ -145,6 +145,33 @@
   }
   button.ghost:hover { background: var(--bg2); }
 
+  /* Direction toggle */
+  .seg {
+    display: flex;
+    gap: 6px;
+    background: var(--bg2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 4px;
+    margin-bottom: 1.5rem;
+  }
+  .seg-btn {
+    flex: 1;
+    padding: 8px 6px;
+    border: none;
+    background: transparent;
+    color: var(--text2);
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+    line-height: 1.25;
+    transition: background 0.15s, color 0.15s;
+  }
+  .seg-btn small { display: block; font-size: 11px; color: var(--text3); font-weight: 400; }
+  .seg-btn.active { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,0.10); }
+  .seg-btn.active small { color: var(--text2); }
+
   .divider { border: none; border-top: 0.5px solid var(--border); margin: 1.25rem 0; }
 
   .addr-box {
@@ -170,6 +197,7 @@
   }
   .stat-label { font-size: 11px; color: var(--text3); margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.05em; }
   .stat-value { font-size: 18px; font-weight: 500; color: var(--text); }
+  .stat-value.mono { font-family: 'SF Mono', 'Fira Mono', monospace; font-size: 16px; }
   .stat-sub { font-size: 12px; color: var(--text2); margin-top: 2px; }
 
   .pill {
@@ -262,8 +290,13 @@
 <div class="page">
 
   <p class="wordmark">GBPF</p>
-  <h1>Swap USDS for GBPF</h1>
-  <p class="subtitle">Enter your wallet. Send USDS to your personal deposit address. GBPF arrives in your wallet within ~5 minutes.</p>
+  <h1 id="page-title">Swap USDS for GBPF</h1>
+  <p class="subtitle" id="page-subtitle">Enter your wallet. Send USDS to your personal deposit address. GBPF arrives in your wallet within ~5 minutes.</p>
+
+  <div class="seg" id="dir-toggle">
+    <button class="seg-btn active" data-dir="mint" onclick="setDirection('mint')">Buy GBPF<small>USDS → GBPF</small></button>
+    <button class="seg-btn" data-dir="redeem" onclick="setDirection('redeem')">Sell GBPF<small>GBPF → USDS</small></button>
+  </div>
 
   <div class="card">
     <div class="label">Your Base wallet address</div>
@@ -273,12 +306,28 @@
   </div>
 
   <div class="card result-section" id="result-section">
-    <div class="label">Your USDS deposit address</div>
+    <div class="label">Your <span class="tok-send">USDS</span> deposit address</div>
     <div class="copy-row">
       <div class="addr-box" id="cf-address">—</div>
       <button class="ghost" onclick="copyAddr()" title="Copy address">Copy</button>
     </div>
     <div class="qr-center"><div id="qr-code"></div></div>
+
+    <div class="label" style="margin-top:0.5rem;">Deposit address balance</div>
+    <div class="stat-grid" style="margin-top:6px;">
+      <div class="stat">
+        <div class="stat-label">USDS</div>
+        <div class="stat-value mono" id="bal-usds">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">GBPF</div>
+        <div class="stat-value mono" id="bal-gbpf">—</div>
+      </div>
+    </div>
+    <div class="oracle-status">
+      <div class="dot" id="bal-dot"></div>
+      <span id="bal-status">Checking balance…</span>
+    </div>
 
     <div class="divider"></div>
 
@@ -294,9 +343,9 @@
     <div class="divider"></div>
 
     <ul class="step-list">
-      <li><div class="step-num">1</div><span>Send any amount of USDS to the deposit address above on Base.</span></li>
-      <li><div class="step-num">2</div><span>Our keeper detects the deposit and executes the swap to GBPF on your behalf.</span></li>
-      <li><div class="step-num">3</div><span>GBPF arrives in your wallet. A small fee (20bp) is deducted to cover execution.</span></li>
+      <li><div class="step-num">1</div><span>Send any amount of <span class="tok-send">USDS</span> to the deposit address above on Base.</span></li>
+      <li><div class="step-num">2</div><span>Our keeper detects the deposit and executes the swap on your behalf.</span></li>
+      <li><div class="step-num">3</div><span><span class="tok-recv">GBPF</span> arrives in your wallet. A small fee (20bp) is deducted to cover execution.</span></li>
     </ul>
   </div>
 
@@ -322,8 +371,8 @@
         <div class="stat-sub">health surcharge</div>
       </div>
       <div class="stat">
-        <div class="stat-label">Mint price</div>
-        <div class="stat-value" id="s-mint">—</div>
+        <div class="stat-label" id="s-price-label">Mint price</div>
+        <div class="stat-value" id="s-price">—</div>
         <div class="stat-sub">USDS per GBPF</div>
       </div>
     </div>
@@ -341,25 +390,25 @@
       <span style="font-size:14px; font-weight:500;">Changed your mind?</span>
       <span class="pill pill-teal" style="margin-bottom:0;">Full refund available</span>
     </div>
-    <p style="font-size:14px; color:var(--text2); margin-bottom:12px; line-height:1.6;">Your USDS sits untouched at your deposit address until the batch runs. If you want it back beforehand, call <code style="font-size:12px; background:var(--bg2); padding:2px 5px; border-radius:4px;">refund()</code> on the ForwarderMinter contract — it returns the full amount with no fee deducted.</p>
+    <p style="font-size:14px; color:var(--text2); margin-bottom:12px; line-height:1.6;">Your <span class="tok-send">USDS</span> sits untouched at your deposit address until the batch runs. If you want it back beforehand, call <code style="font-size:12px; background:var(--bg2); padding:2px 5px; border-radius:4px;">refund()</code> on the <span class="rf-contract-name">ForwarderMinter</span> contract — it returns the full amount with no fee deducted.</p>
 
     <div class="label">How to get a refund</div>
     <ul class="step-list" style="margin-bottom:12px;">
-      <li><div class="step-num">1</div><span>Go to the ForwarderMinter contract on Basescan (link below) and open the <strong style="font-weight:500;">Write Contract</strong> tab.</span></li>
+      <li><div class="step-num">1</div><span>Go to the <span class="rf-contract-name">ForwarderMinter</span> contract on Basescan (link below) and open the <strong style="font-weight:500;">Write Contract</strong> tab.</span></li>
       <li><div class="step-num">2</div><span>Connect your wallet using the "Connect to Web3" button on Basescan.</span></li>
       <li><div class="step-num">3</div><span>Find the <code style="font-size:12px; background:var(--bg2); padding:2px 5px; border-radius:4px;">refund</code> function and enter your wallet address as the <code style="font-size:12px; background:var(--bg2); padding:2px 5px; border-radius:4px;">user</code> parameter.</span></li>
-      <li><div class="step-num">4</div><span>Submit the transaction. Your full USDS balance is returned immediately to your wallet.</span></li>
+      <li><div class="step-num">4</div><span>Submit the transaction. Your full <span class="tok-send">USDS</span> balance is returned immediately to your wallet.</span></li>
     </ul>
 
     <div style="background:var(--bg2); border-radius:var(--radius); padding:10px 12px; margin-bottom:12px;">
-      <div class="label" style="margin-bottom:4px;">ForwarderMinter contract</div>
-      <div style="font-family:'SF Mono','Fira Mono',monospace; font-size:12px; color:var(--text); word-break:break-all;" id="forwarder-addr">TODO: ForwarderMinter address</div>
+      <div class="label" style="margin-bottom:4px;"><span class="rf-contract-name">ForwarderMinter</span> contract</div>
+      <div style="font-family:'SF Mono','Fira Mono',monospace; font-size:12px; color:var(--text); word-break:break-all;" id="forwarder-addr">—</div>
     </div>
 
     <a id="basescan-link" href="#" style="display:inline-block; font-size:13px; color:var(--text2); text-decoration:none; border:0.5px solid var(--border); border-radius:var(--radius); padding:6px 12px;">View on Basescan &rarr;</a>
 
     <div style="margin-top:12px; padding:10px 12px; background:var(--amber-bg); border-radius:var(--radius); font-size:13px; color:var(--amber-text);">
-      If the batch has already swept your deposit, <code style="font-size:12px; background:rgba(0,0,0,0.08); padding:2px 5px; border-radius:4px;">refund()</code> will revert with <code style="font-size:12px; background:rgba(0,0,0,0.08); padding:2px 5px; border-radius:4px;">NothingToDo</code> — meaning your GBPF is already on its way. It is always safe to try.
+      If the batch has already swept your deposit, <code style="font-size:12px; background:rgba(0,0,0,0.08); padding:2px 5px; border-radius:4px;">refund()</code> will revert with <code style="font-size:12px; background:rgba(0,0,0,0.08); padding:2px 5px; border-radius:4px;">NothingToDo</code> — meaning your <span class="tok-recv">GBPF</span> is already on its way. It is always safe to try.
     </div>
   </div>
 
@@ -372,10 +421,12 @@ const BASE_RPC = 'https://mainnet.base.org';
 const ORACLE = '0x9c66F3F8a102d6Bf3EeaEAAe5d9ECAe88985eB2F';
 const VAULT  = '0xA9a831a348D0Db372cf75dd7C082cFF67A453498';
 const GBPF   = '0x1817FD23ceF7Da47DF934fdc880d72e653786770';
+const USDS   = '0x820C137fa70C8691f0e44Dc420a5e53c168921Dc';
 
 const SEL_UPDATE           = '0xa2e62045';
 const SEL_PREVIEW_SOLVENCY = '0xf392169c';
 const SEL_TOTAL_SUPPLY     = '0x18160ddd';
+const SEL_BALANCE_OF       = '0x70a08231';
 
 const S_MAX    = 0.05;
 const D_50     = 0.05;
@@ -384,12 +435,35 @@ const WAD = BigInt('1000000000000000000');
 const RAY = BigInt('1000000000000000000000000000');
 const MAX_SOL = WAD * BigInt(10);
 
-const TODO_FACTORY           = '0x163e95500660bDF76D7F2dD97bb6F47d947C7226'; // ForwarderMinter (Base)
-const TODO_INIT_CODE_HASH    = '0x12bf77d0243b216de5f0dc2feca23fb449ae21e3e071c70e2ff350b15edf3374'; // FORWARDER_INIT_HASH
-const TODO_FORWARDER_MINTER  = '0x163e95500660bDF76D7F2dD97bb6F47d947C7226'; // ForwarderMinter (Base)
+// Both forwarder factories deploy the same Forwarder bytecode, so they share an init-code hash;
+// only the deployer (factory) differs, which is what makes the deposit address direction-specific.
+const FORWARDER_INIT_HASH = '0x12bf77d0243b216de5f0dc2feca23fb449ae21e3e071c70e2ff350b15edf3374';
 
+const DIRECTIONS = {
+  mint: {
+    factory: '0x163e95500660bDF76D7F2dD97bb6F47d947C7226', // ForwarderMinter (Base)
+    initHash: FORWARDER_INIT_HASH,
+    send: { sym: 'USDS', addr: USDS },
+    recv: { sym: 'GBPF', addr: GBPF },
+    contractName: 'ForwarderMinter',
+    priceLabel: 'Mint price',
+  },
+  redeem: {
+    factory: '0x5b1c7dF048a7E4EbEA285B64Cb1FCa675044c9E2', // ForwarderRedeemer (Base)
+    initHash: FORWARDER_INIT_HASH,
+    send: { sym: 'GBPF', addr: GBPF },
+    recv: { sym: 'USDS', addr: USDS },
+    contractName: 'ForwarderRedeemer',
+    priceLabel: 'Redeem price',
+  },
+};
+
+let DIR = 'mint';
 let liveRate = null;
-let lastCfAddr = '';
+let lastWallet = '';   // checksummed user wallet
+let lastCfAddr = '';   // current deposit address
+let balTimer = null;
+let sawFunds = false;
 
 async function ethCall(to, data) {
   const body = JSON.stringify({
@@ -458,14 +532,16 @@ async function fetchRate() {
     const solvency    = Number(solvencyWad) / Number(WAD);
     const twap        = Number(twapWad) / Number(WAD);
     const sp          = spreadFn(solvency);
+    // Spread is applied symmetrically around the TWAP mid: minting pays above, redeeming receives
+    // below. At full solvency sp≈0, so both reduce to twap·(1±fee) — matches the fork-test bounds.
     const mintPrice   = twap * (1 + sp + FLAT_FEE);
+    const redeemPrice = twap * (1 - sp - FLAT_FEE);
 
-    liveRate = { twap, solvency, sp, mintPrice, healthy };
+    liveRate = { twap, solvency, sp, mintPrice, redeemPrice, healthy };
 
     document.getElementById('s-twap').textContent     = twap.toFixed(4);
     document.getElementById('s-solvency').textContent = (solvency * 100).toFixed(2) + '%';
     document.getElementById('s-spread').textContent   = (sp * 10000).toFixed(1) + ' bp';
-    document.getElementById('s-mint').textContent     = mintPrice.toFixed(4);
 
     const solEl = document.getElementById('s-solvency-state');
     const diff = Math.abs(solvency - 1);
@@ -490,6 +566,7 @@ async function fetchRate() {
       statusEl.textContent = 'Oracle unhealthy — swaps paused';
     }
 
+    renderPriceStat();
     updateQuote();
   } catch(e) {
     dotEl.className = 'dot dot-red';
@@ -497,26 +574,65 @@ async function fetchRate() {
   }
 }
 
+function renderPriceStat() {
+  const cfg = DIRECTIONS[DIR];
+  document.getElementById('s-price-label').textContent = cfg.priceLabel;
+  const el = document.getElementById('s-price');
+  if (!liveRate) { el.textContent = '—'; return; }
+  el.textContent = (DIR === 'mint' ? liveRate.mintPrice : liveRate.redeemPrice).toFixed(4);
+}
+
 function getCreate2Address(sender) {
+  const cfg = DIRECTIONS[DIR];
   try {
     const salt = ethers.zeroPadValue(sender, 32);
-    return ethers.getCreate2Address(TODO_FACTORY, salt, TODO_INIT_CODE_HASH);
+    return ethers.getCreate2Address(cfg.factory, salt, cfg.initHash);
   } catch(e) {
     return null;
   }
 }
 
-function handleGo() {
-  const raw = document.getElementById('wallet-input').value.trim();
-  const errEl = document.getElementById('addr-error');
-  errEl.style.display = 'none';
+// Update all the direction-dependent chrome (titles, token words, refund card, price stat).
+function updateChrome() {
+  const cfg = DIRECTIONS[DIR];
 
-  let addr;
-  try { addr = ethers.getAddress(raw); }
-  catch(e) { errEl.style.display = 'block'; return; }
+  document.querySelectorAll('.seg-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.dir === DIR));
 
-  const cf = getCreate2Address(addr);
-  if (!cf) { errEl.style.display = 'block'; return; }
+  document.getElementById('page-title').textContent =
+    `Swap ${cfg.send.sym} for ${cfg.recv.sym}`;
+  document.getElementById('page-subtitle').textContent =
+    `Enter your wallet. Send ${cfg.send.sym} to your personal deposit address. ` +
+    `${cfg.recv.sym} arrives in your wallet within ~5 minutes.`;
+
+  document.querySelectorAll('.tok-send').forEach(e => e.textContent = cfg.send.sym);
+  document.querySelectorAll('.tok-recv').forEach(e => e.textContent = cfg.recv.sym);
+  document.querySelectorAll('.rf-contract-name').forEach(e => e.textContent = cfg.contractName);
+
+  document.getElementById('amount-input').placeholder = `Amount of ${cfg.send.sym} to send`;
+  document.getElementById('forwarder-addr').textContent = cfg.factory;
+  document.getElementById('basescan-link').href =
+    'https://basescan.org/address/' + cfg.factory + '#writeContract';
+
+  renderPriceStat();
+}
+
+function setDirection(dir) {
+  if (dir === DIR || !DIRECTIONS[dir]) return;
+  DIR = dir;
+  updateChrome();
+  // Amount typed for one direction doesn't carry meaning to the other — reset for clarity.
+  document.getElementById('amount-input').value = '';
+  if (lastWallet) {
+    renderDeposit();   // recompute the address for the new direction
+  } else {
+    updateQuote();
+  }
+}
+
+function renderDeposit() {
+  const cf = getCreate2Address(lastWallet);
+  if (!cf) { document.getElementById('addr-error').style.display = 'block'; return; }
 
   lastCfAddr = cf;
   document.getElementById('cf-address').textContent = cf;
@@ -533,10 +649,80 @@ function handleGo() {
   });
 
   document.getElementById('result-section').style.display = 'block';
+  startBalancePolling();
   updateQuote();
 }
 
+function handleGo() {
+  const raw = document.getElementById('wallet-input').value.trim();
+  const errEl = document.getElementById('addr-error');
+  errEl.style.display = 'none';
+
+  let addr;
+  try { addr = ethers.getAddress(raw); }
+  catch(e) { errEl.style.display = 'block'; return; }
+
+  lastWallet = addr;
+  renderDeposit();
+}
+
+async function erc20Balance(token, holder) {
+  const data = SEL_BALANCE_OF + '000000000000000000000000' + holder.slice(2).toLowerCase();
+  const res = await ethCall(token, data);
+  return BigInt(res);
+}
+
+function fmtUnits(wei) {
+  return (+ethers.formatUnits(wei, 18)).toFixed(4);
+}
+
+async function pollBalances() {
+  if (!lastCfAddr) return;
+  const dot = document.getElementById('bal-dot');
+  const st  = document.getElementById('bal-status');
+  try {
+    const addr = lastCfAddr;
+    const [u, g] = await Promise.all([
+      erc20Balance(USDS, addr),
+      erc20Balance(GBPF, addr),
+    ]);
+    if (addr !== lastCfAddr) return;  // direction changed mid-flight; ignore stale result
+
+    document.getElementById('bal-usds').textContent = fmtUnits(u);
+    document.getElementById('bal-gbpf').textContent = fmtUnits(g);
+
+    const cfg = DIRECTIONS[DIR];
+    const sendBal = cfg.send.sym === 'USDS' ? u : g;
+    if (sendBal > 0n) {
+      sawFunds = true;
+      dot.className = 'dot dot-amber';
+      st.textContent = `${cfg.send.sym} received — waiting for the keeper to process`;
+    } else if (sawFunds) {
+      dot.className = 'dot dot-green';
+      st.textContent = `Processed — ${cfg.recv.sym} sent to your wallet`;
+    } else {
+      dot.className = 'dot';
+      st.textContent = `No deposit yet — send ${cfg.send.sym} to the address above`;
+    }
+  } catch(e) {
+    dot.className = 'dot dot-red';
+    st.textContent = 'Could not fetch balances: ' + e.message;
+  }
+}
+
+function startBalancePolling() {
+  if (balTimer) clearInterval(balTimer);
+  sawFunds = false;
+  document.getElementById('bal-usds').textContent = '—';
+  document.getElementById('bal-gbpf').textContent = '—';
+  document.getElementById('bal-status').textContent = 'Checking balance…';
+  document.getElementById('bal-dot').className = 'dot dot-amber';
+  pollBalances();
+  balTimer = setInterval(pollBalances, 15000);
+}
+
 function updateQuote() {
+  const cfg = DIRECTIONS[DIR];
   const amt = parseFloat(document.getElementById('amount-input').value);
   if (!liveRate || isNaN(amt) || amt <= 0) {
     ['q-send','q-receive','q-rate','q-fee'].forEach(id => {
@@ -544,12 +730,19 @@ function updateQuote() {
     });
     return;
   }
-  const gbpfOut = amt / liveRate.mintPrice;
-  const fee = amt * FLAT_FEE;
-  document.getElementById('q-send').textContent    = amt.toFixed(2) + ' USDS';
-  document.getElementById('q-receive').textContent = gbpfOut.toFixed(4) + ' GBPF';
-  document.getElementById('q-rate').textContent    = liveRate.mintPrice.toFixed(4);
-  document.getElementById('q-fee').textContent     = fee.toFixed(4) + ' USDS';
+  if (DIR === 'mint') {
+    const gbpfOut = amt / liveRate.mintPrice;
+    document.getElementById('q-send').textContent    = amt.toFixed(2) + ' USDS';
+    document.getElementById('q-receive').textContent = gbpfOut.toFixed(4) + ' GBPF';
+    document.getElementById('q-rate').textContent    = liveRate.mintPrice.toFixed(4);
+    document.getElementById('q-fee').textContent     = (amt * FLAT_FEE).toFixed(4) + ' USDS';
+  } else {
+    const usdsOut = amt * liveRate.redeemPrice;
+    document.getElementById('q-send').textContent    = amt.toFixed(4) + ' GBPF';
+    document.getElementById('q-receive').textContent = usdsOut.toFixed(2) + ' USDS';
+    document.getElementById('q-rate').textContent    = liveRate.redeemPrice.toFixed(4);
+    document.getElementById('q-fee').textContent     = (amt * liveRate.twap * FLAT_FEE).toFixed(4) + ' USDS';
+  }
 }
 
 function copyAddr() {
@@ -566,18 +759,9 @@ document.getElementById('wallet-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') handleGo();
 });
 
+updateChrome();
 fetchRate();
 setInterval(fetchRate, 60000);
-
-const fmAddrEl = document.getElementById('forwarder-addr');
-const fmLinkEl = document.getElementById('basescan-link');
-if (TODO_FORWARDER_MINTER) {
-  fmAddrEl.textContent = TODO_FORWARDER_MINTER;
-  fmLinkEl.href = 'https://basescan.org/address/' + TODO_FORWARDER_MINTER + '#writeContract';
-} else {
-  fmAddrEl.textContent = 'TODO: ForwarderMinter address — coming soon';
-  fmLinkEl.style.display = 'none';
-}
 </script>
 </body>
 </html>
