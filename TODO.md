@@ -84,4 +84,3 @@ npx wrangler tail                           # live logs
   searchers can run the same scan once volume justifies it.
 - Also outstanding: **commit** the forwarder contracts + keeper to the `feat/batch-minter-redeemer`
   branch (currently uncommitted).
-</content>
