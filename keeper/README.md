@@ -36,7 +36,7 @@ npx wrangler kv namespace create KEEPER_KV
 
 # 3. Secrets (encrypted; never in the repo):
 npx wrangler secret put BASE_RPC_URL
-npx wrangler secret put EXECUTOR_PRIVATE_KEY
+npx wrangler secret put PRIVATE_KEY
 
 # 4. Dry-run locally (fires the scheduled handler once):
 npm run dev            # then in another shell: curl "http://localhost:8787/__scheduled"

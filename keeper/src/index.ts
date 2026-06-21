@@ -34,7 +34,7 @@ import { base } from "viem/chains";
 interface Env {
   KEEPER_KV: KVNamespace;
   BASE_RPC_URL: string;
-  EXECUTOR_PRIVATE_KEY: string;
+  PRIVATE_KEY: string;
   MINTER: string;
   REDEEMER: string;
   USDS: string;
@@ -180,7 +180,7 @@ async function runKeeper(env: Env, kind: Kind): Promise<void> {
 // ---- helpers ----
 
 function executorAccount(env: Env) {
-  return privateKeyToAccount(env.EXECUTOR_PRIVATE_KEY as Hex);
+  return privateKeyToAccount(env.PRIVATE_KEY as Hex);
 }
 
 /// Recompute the forwarder address the same way the contract does:

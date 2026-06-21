@@ -66,6 +66,35 @@ BATCHMINTER_DESIGN.md and `script/BatchDeploy.s.sol`.
 
 Artifact: `broadcast/BatchDeploy.s.sol/8453/run-latest.json`. Total deploy cost 0.0000289 ETH.
 
+## Forwarder batchers deployment (2026-06-21, periphery — NOT part of the immutable core)
+
+Send-and-forget version of the batchers: a user deposits with a **plain transfer** to their own
+deterministic CREATE2 address (no approve, no contract call), and a permissionless keeper sweeps +
+swaps + returns the result. See BATCHMINTER_DESIGN.md ("Forwarder model"), `keeper/` (Cloudflare
+Worker), and `gbpf-swap.html` (the deposit UI).
+
+| Component | Address |
+|---|---|
+| ForwarderMinter (USDS → GBPF, owner = deployer EOA) | `0x163e95500660bDF76D7F2dD97bb6F47d947C7226` |
+| ForwarderRedeemer (GBPF → USDS, owner = deployer EOA) | `0x5b1c7dF048a7E4EbEA285B64Cb1FCa675044c9E2` |
+
+- **Owner (immutable, both):** `0x398CA93b76806D3517DD3520F1aE09620Fcb5c24`.
+- Same wiring/fee model/tank as the deposit-based pair; redeemer also flushes the Vault. Bound to
+  the live Hook/GBPF/USDS (+ Vault), PSM3→USDC→V3→WETH fee route.
+- **`FORWARDER_INIT_HASH` (both):** `0x12bf77d0243b216de5f0dc2feca23fb449ae21e3e071c70e2ff350b15edf3374`
+  — fixes every user's deposit address as `CREATE2(factory, salt=user, this hash)`. The deposit UI
+  computes the same address client-side (verified equal to on-chain `depositAddressOf`).
+- **Verified on Basescan** (both). Deployed with no ETH seed.
+
+### Forwarder batchers transaction hashes
+
+| Contract | Tx hash | Block |
+|---|---|---|
+| ForwarderMinter | `0xa8652663ba9e76634f029f1e34c0841bc72b5abe6242f91af1e7db1e86edbb58` | 47608520 |
+| ForwarderRedeemer | `0x712470fb5d9803c1e4f8e952866c4c14267710a11b7840ab77d2ef06e8aa3cae` | 47608520 |
+
+Artifact: `broadcast/ForwarderDeploy.s.sol/8453/run-latest.json`.
+
 ## ⚠️ Known quirk in the LIVE OracleAdapter: preview() TWAP
 
 The deployed (immutable) OracleAdapter's `preview()` view returns an **amplified TWAP** when a
