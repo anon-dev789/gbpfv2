@@ -38,4 +38,3 @@ MIN_BATCH_WEI = "1000000000000000000"
 #   BASE_RPC_URL  a Base RPC endpoint (a private one is strongly recommended)
 #   PRIVATE_KEY   the hot key that sends sweepAndExecute; keep it lightly funded with ETH
 #                 (it is reimbursed from each contract's gas tank)
-</content>
