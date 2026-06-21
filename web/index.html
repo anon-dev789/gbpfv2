@@ -328,6 +328,12 @@
       <div class="dot" id="bal-dot"></div>
       <span id="bal-status">Checking balance…</span>
     </div>
+    <p style="font-size:12px; color:var(--text3); margin-top:10px; line-height:1.5;">
+      Deposits are processed in batches. A sweep runs once the pending total reaches
+      <strong style="color:var(--text2);"><span class="min-batch">1 USDS</span></strong> — smaller
+      amounts wait at your deposit address until enough accumulates, so top up to the minimum if you
+      want it processed right away.
+    </p>
 
     <div class="divider"></div>
 
@@ -434,6 +440,12 @@ const FLAT_FEE = 0.002;
 const WAD = BigInt('1000000000000000000');
 const RAY = BigInt('1000000000000000000000000000');
 const MAX_SOL = WAD * BigInt(10);
+
+// The keeper only fires a sweep once the pending total reaches this (its MIN_BATCH_WEI). Smaller
+// deposits sit at the deposit address until the total — yours plus any other pending depositors' —
+// clears it. Same numeric threshold applies to both directions, denominated in the send token.
+const MIN_BATCH_WAD = BigInt('1000000000000000000');
+function minBatchStr() { return (+ethers.formatUnits(MIN_BATCH_WAD, 18)).toString(); }
 
 // Both forwarder factories deploy the same Forwarder bytecode, so they share an init-code hash;
 // only the deployer (factory) differs, which is what makes the deposit address direction-specific.
@@ -608,6 +620,7 @@ function updateChrome() {
   document.querySelectorAll('.tok-send').forEach(e => e.textContent = cfg.send.sym);
   document.querySelectorAll('.tok-recv').forEach(e => e.textContent = cfg.recv.sym);
   document.querySelectorAll('.rf-contract-name').forEach(e => e.textContent = cfg.contractName);
+  document.querySelectorAll('.min-batch').forEach(e => e.textContent = `${minBatchStr()} ${cfg.send.sym}`);
 
   document.getElementById('amount-input').placeholder = `Amount of ${cfg.send.sym} to send`;
   document.getElementById('forwarder-addr').textContent = cfg.factory;
@@ -696,7 +709,14 @@ async function pollBalances() {
     if (sendBal > 0n) {
       sawFunds = true;
       dot.className = 'dot dot-amber';
-      st.textContent = `${cfg.send.sym} received — waiting for the keeper to process`;
+      if (sendBal >= MIN_BATCH_WAD) {
+        st.textContent = `${cfg.send.sym} received — waiting for the keeper to process (next run ~2 min)`;
+      } else {
+        const need = MIN_BATCH_WAD - sendBal;
+        st.textContent =
+          `Received ${fmtUnits(sendBal)} ${cfg.send.sym} — below the ${minBatchStr()} ${cfg.send.sym} ` +
+          `batch minimum; send ~${fmtUnits(need)} more (or wait for other deposits) to trigger it`;
+      }
     } else if (sawFunds) {
       dot.className = 'dot dot-green';
       st.textContent = `Processed — ${cfg.recv.sym} sent to your wallet`;
