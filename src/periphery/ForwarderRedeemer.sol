@@ -75,7 +75,7 @@ contract ForwarderRedeemer is IUnlockCallback, IUniswapV3SwapCallback {
     uint256 internal constant GAS_OVERHEAD = 50_000;
 
     uint256 public feeUsds = 0.05e18;
-    uint256 public fixedFeeUsds = 0.10e18;
+    uint256 public fixedFeeUsds = 0.1e18;
     uint256 public bonusBps = 2_000;
     uint256 public maxBatch = 150;
 
@@ -95,7 +95,12 @@ contract ForwarderRedeemer is IUnlockCallback, IUniswapV3SwapCallback {
 
     event Swept(address indexed user, uint256 gbpfIn);
     event BatchExecuted(
-        address indexed runner, uint256 userCount, uint256 gbpfRedeemed, uint256 usdsOut, uint256 feeCollected, uint256 runnerPayoutWei
+        address indexed runner,
+        uint256 userCount,
+        uint256 gbpfRedeemed,
+        uint256 usdsOut,
+        uint256 feeCollected,
+        uint256 runnerPayoutWei
     );
     event Refunded(address indexed user, uint256 gbpfReturned);
     event PushFailedEscrowed(address indexed user, uint256 usdsAmount);
@@ -250,7 +255,8 @@ contract ForwarderRedeemer is IUnlockCallback, IUniswapV3SwapCallback {
 
         // 5. Top up the tank from fees (best-effort), then reimburse the runner.
         if (totalFee > 0) {
-            try this.swapFeeToEth(totalFee) {} catch (bytes memory reason) {
+            try this.swapFeeToEth(totalFee) {}
+            catch (bytes memory reason) {
                 emit FeeSwapFailed(reason);
             }
         }

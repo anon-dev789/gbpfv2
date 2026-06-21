@@ -85,7 +85,7 @@ contract BatchRedeemer is IUnlockCallback, IUniswapV3SwapCallback {
     // ============================================================================================
 
     uint256 public feeUsds = 0.05e18; // per-depositor marginal fee
-    uint256 public fixedFeeUsds = 0.10e18; // per-batch fixed fee, split /n
+    uint256 public fixedFeeUsds = 0.1e18; // per-batch fixed fee, split /n
     uint256 public bonusBps = 2_000;
     uint256 public maxDepositors = 150;
     uint256 public minGbpfDeposit = 0.2e18; // dust floor (~0.25 USDS at parity)
@@ -125,7 +125,9 @@ contract BatchRedeemer is IUnlockCallback, IUniswapV3SwapCallback {
     event Claimed(address indexed depositor, uint256 usdsAmount);
     event FeeSwappedToEth(uint256 usdsIn, uint256 ethOut);
     event FeeSwapFailed(bytes reason);
-    event ParamsUpdated(uint256 feeUsds, uint256 fixedFeeUsds, uint256 bonusBps, uint256 maxDepositors, uint256 minGbpfDeposit);
+    event ParamsUpdated(
+        uint256 feeUsds, uint256 fixedFeeUsds, uint256 bonusBps, uint256 maxDepositors, uint256 minGbpfDeposit
+    );
     event TankFunded(address indexed from, uint256 amount);
     event OwnerWithdrawal(address indexed token, uint256 amount, address to);
 
@@ -282,7 +284,8 @@ contract BatchRedeemer is IUnlockCallback, IUniswapV3SwapCallback {
 
         // Top up the ETH tank from the collected fees. Best-effort.
         if (totalFee > 0) {
-            try this.swapFeeToEth(totalFee) {} catch (bytes memory reason) {
+            try this.swapFeeToEth(totalFee) {}
+            catch (bytes memory reason) {
                 emit FeeSwapFailed(reason);
             }
         }

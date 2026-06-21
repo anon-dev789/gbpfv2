@@ -74,7 +74,7 @@ contract ForwarderMinter is IUnlockCallback, IUniswapV3SwapCallback {
     uint256 internal constant GAS_OVERHEAD = 50_000;
 
     uint256 public feeUsds = 0.05e18; // per-depositor marginal fee
-    uint256 public fixedFeeUsds = 0.10e18; // per-batch fixed fee, split /n
+    uint256 public fixedFeeUsds = 0.1e18; // per-batch fixed fee, split /n
     uint256 public bonusBps = 2_000;
     uint256 public maxBatch = 150; // cap on users[] length per sweep
 
@@ -94,7 +94,12 @@ contract ForwarderMinter is IUnlockCallback, IUniswapV3SwapCallback {
 
     event Swept(address indexed user, uint256 usdsIn);
     event BatchExecuted(
-        address indexed runner, uint256 userCount, uint256 usdsSwapped, uint256 gbpfOut, uint256 feeCollected, uint256 runnerPayoutWei
+        address indexed runner,
+        uint256 userCount,
+        uint256 usdsSwapped,
+        uint256 gbpfOut,
+        uint256 feeCollected,
+        uint256 runnerPayoutWei
     );
     event Refunded(address indexed user, uint256 usdsReturned);
     event PushFailedEscrowed(address indexed user, uint256 gbpfAmount);
@@ -258,7 +263,8 @@ contract ForwarderMinter is IUnlockCallback, IUniswapV3SwapCallback {
 
         // 5. Top up the tank from fees (best-effort), then reimburse the runner.
         if (totalFee > 0) {
-            try this.swapFeeToEth(totalFee) {} catch (bytes memory reason) {
+            try this.swapFeeToEth(totalFee) {}
+            catch (bytes memory reason) {
                 emit FeeSwapFailed(reason);
             }
         }

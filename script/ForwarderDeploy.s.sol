@@ -64,7 +64,8 @@ contract ForwarderDeploy is Script {
 
         vm.startBroadcast();
 
-        ForwarderMinter m = new ForwarderMinter(owner, V4_POOL_MANAGER, HOOK, GBPF, USDS, PSM3, USDC, WETH, USDC_WETH_POOL);
+        ForwarderMinter m =
+            new ForwarderMinter(owner, V4_POOL_MANAGER, HOOK, GBPF, USDS, PSM3, USDC, WETH, USDC_WETH_POOL);
         ForwarderRedeemer r =
             new ForwarderRedeemer(owner, V4_POOL_MANAGER, HOOK, VAULT, GBPF, USDS, PSM3, USDC, WETH, USDC_WETH_POOL);
 

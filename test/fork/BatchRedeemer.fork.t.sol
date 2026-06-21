@@ -43,8 +43,9 @@ contract MinimalRouter is IUnlockCallback {
     }
 
     function swap(PoolKey calldata key, SwapParams calldata params, address recipient) external returns (BalanceDelta) {
-        bytes memory result =
-            POOL_MANAGER.unlock(abi.encode(CallbackData({key: key, params: params, payer: msg.sender, recipient: recipient})));
+        bytes memory result = POOL_MANAGER.unlock(
+            abi.encode(CallbackData({key: key, params: params, payer: msg.sender, recipient: recipient}))
+        );
         return abi.decode(result, (BalanceDelta));
     }
 
@@ -129,7 +130,16 @@ contract BatchRedeemerForkTest is Test {
         vault.flush();
 
         redeemer = new BatchRedeemer(
-            owner, V4_POOL_MANAGER, address(hook), address(vault), address(gbpf), USDS_TOKEN, PSM3, USDC, WETH, USDC_WETH_POOL
+            owner,
+            V4_POOL_MANAGER,
+            address(hook),
+            address(vault),
+            address(gbpf),
+            USDS_TOKEN,
+            PSM3,
+            USDC,
+            WETH,
+            USDC_WETH_POOL
         );
 
         vm.fee(1 gwei);
@@ -146,9 +156,7 @@ contract BatchRedeemerForkTest is Test {
         vm.startPrank(who);
         IERC20Like(USDS_TOKEN).approve(address(router), usdsIn);
         router.swap(
-            poolKey,
-            SwapParams({zeroForOne: usdsIsToken0, amountSpecified: -int256(usdsIn), sqrtPriceLimitX96: 0}),
-            who
+            poolKey, SwapParams({zeroForOne: usdsIsToken0, amountSpecified: -int256(usdsIn), sqrtPriceLimitX96: 0}), who
         );
         vm.stopPrank();
     }

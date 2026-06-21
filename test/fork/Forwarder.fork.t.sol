@@ -72,7 +72,16 @@ contract ForwarderForkTest is Test {
             owner, V4_POOL_MANAGER, address(hook), address(gbpf), USDS_TOKEN, PSM3, USDC, WETH, USDC_WETH_POOL
         );
         redeemer = new ForwarderRedeemer(
-            owner, V4_POOL_MANAGER, address(hook), address(vault), address(gbpf), USDS_TOKEN, PSM3, USDC, WETH, USDC_WETH_POOL
+            owner,
+            V4_POOL_MANAGER,
+            address(hook),
+            address(vault),
+            address(gbpf),
+            USDS_TOKEN,
+            PSM3,
+            USDC,
+            WETH,
+            USDC_WETH_POOL
         );
 
         vm.warp(block.timestamp + 5 minutes + 1);

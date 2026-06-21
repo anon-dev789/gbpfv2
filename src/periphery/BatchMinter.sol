@@ -94,7 +94,7 @@ contract BatchMinter is IUnlockCallback, IUniswapV3SwapCallback {
     ///      depositors there are — the single hook swap + the USDS→ETH conversion + base tx. So
     ///      total fee = n × feeUsds + fixedFeeUsds, mirroring gas = marginal × n + fixed. A lone
     ///      depositor bears the whole fixed cost, which discourages uneconomic tiny batches.
-    uint256 public fixedFeeUsds = 0.10e18; // ~one batch's fixed overhead at Base gas
+    uint256 public fixedFeeUsds = 0.1e18; // ~one batch's fixed overhead at Base gas
 
     uint256 public bonusBps = 2_000; // +20% over basefee reimbursement
     uint256 public maxDepositors = 150;
@@ -298,7 +298,8 @@ contract BatchMinter is IUnlockCallback, IUniswapV3SwapCallback {
         // 4. Top up the ETH tank from the collected fees. Best-effort: a failed conversion must
         //    not block the mint — the fee USDS stays and rolls into a future top-up.
         if (totalFee > 0) {
-            try this.swapFeeToEth(totalFee) {} catch (bytes memory reason) {
+            try this.swapFeeToEth(totalFee) {}
+            catch (bytes memory reason) {
                 emit FeeSwapFailed(reason);
             }
         }
