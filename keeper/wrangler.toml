@@ -17,6 +17,9 @@ id = "95198a368dad46f1b894476e9d3e4782"
 [vars]
 # Base mainnet.
 CHAIN_ID = "8453"
+# Base RPC. Public endpoint (no API key) — fine to commit, but it rate-limits eth_getLogs, so the
+# log scan may throttle. Swap to a private endpoint later via a Secret (delete this line) if needed.
+BASE_RPC_URL = "https://mainnet.base.org"
 # ForwarderMinter / ForwarderRedeemer (live on Base — DEPLOYMENT.md).
 MINTER = "0x163e95500660bDF76D7F2dD97bb6F47d947C7226"
 REDEEMER = "0x5b1c7dF048a7E4EbEA285B64Cb1FCa675044c9E2"
@@ -34,7 +37,6 @@ MAX_RANGE = "3000"
 # gas to process dust. Tune per token.
 MIN_BATCH_WEI = "1000000000000000000"
 
-# Secrets (set in the Cloudflare dashboard, or `wrangler secret put <NAME>` — NOT in this file):
-#   BASE_RPC_URL  a Base RPC endpoint (a private one is strongly recommended)
+# Secret (set in the Cloudflare dashboard, or `wrangler secret put <NAME>` — NOT in this file):
 #   PRIVATE_KEY   the hot key that sends sweepAndExecute; keep it lightly funded with ETH
 #                 (it is reimbursed from each contract's gas tank)
