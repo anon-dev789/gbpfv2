@@ -11,7 +11,7 @@ import {ForwarderRedeemer} from "../src/periphery/ForwarderRedeemer.sol";
 ///           - ForwarderMinter   (send USDS to your deposit address → batched mint → GBPF back)
 ///           - ForwarderRedeemer (send GBPF to your deposit address → batched redeem → USDS back)
 ///         Users deposit with a plain transfer to a per-user CREATE2 address; a keeper sweeps and
-///         swaps. See BATCHMINTER_DESIGN.md ("Forwarder model") + keeper/ + gbpf-swap.html.
+///         swaps. See BATCHMINTER_DESIGN.md ("Forwarder model") + keeper/ + web/index.html.
 ///
 ///         Pure periphery; binds to the already-live hook/pool — no pool to create or initialise.
 ///         Deploy is `new` + (optionally) seeding each ETH tank via SEED_ETH_WEI (default 0; the
@@ -28,7 +28,7 @@ import {ForwarderRedeemer} from "../src/periphery/ForwarderRedeemer.sol";
 ///             --verify --etherscan-api-key $BASESCAN_API_KEY
 ///
 ///         After deploy, put the two addresses into: DEPLOYMENT.md, keeper/wrangler.toml
-///         (MINTER/REDEEMER + START_BLOCK), and gbpf-swap.html (CFG.minter/CFG.redeemer).
+///         (MINTER/REDEEMER + START_BLOCK), and web/index.html (CFG.minter/CFG.redeemer).
 ///
 ///         Manual verify (if --verify is skipped). NOTE the constructor arg orders differ:
 ///           ForwarderMinter  (owner, poolManager, hook,        gbpf, usds, psm3, usdc, weth, usdcWethPool)
@@ -87,7 +87,7 @@ contract ForwarderDeploy is Script {
         console2.log("Next:");
         console2.log(" - Verify on Basescan (see header), then record both addresses in DEPLOYMENT.md.");
         console2.log(" - Set MINTER/REDEEMER + START_BLOCK in keeper/wrangler.toml.");
-        console2.log(" - Set CFG.minter/CFG.redeemer in gbpf-swap.html.");
+        console2.log(" - Set CFG.minter/CFG.redeemer in web/index.html.");
     }
 
     function _requireCode(address a, string memory name) internal view {

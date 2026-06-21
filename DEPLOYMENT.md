@@ -71,7 +71,7 @@ Artifact: `broadcast/BatchDeploy.s.sol/8453/run-latest.json`. Total deploy cost 
 Send-and-forget version of the batchers: a user deposits with a **plain transfer** to their own
 deterministic CREATE2 address (no approve, no contract call), and a permissionless keeper sweeps +
 swaps + returns the result. See BATCHMINTER_DESIGN.md ("Forwarder model"), `keeper/` (Cloudflare
-Worker), and `gbpf-swap.html` (the deposit UI).
+Worker), and `web/index.html` (the deposit UI).
 
 | Component | Address |
 |---|---|
