@@ -100,6 +100,16 @@ async function runKeeper(env: Env, kind: Kind): Promise<void> {
   const maxRange = BigInt(env.MAX_RANGE);
   const toBlock = head < fromBlock + maxRange ? head : fromBlock + maxRange;
   if (toBlock < fromBlock) {
+    // head is below where we've already scanned to. A few blocks back can be a shallow reorg;
+    // anything larger means the RPC handed us a stale/implausible head (e.g. a load-balanced
+    // node hours behind tip). Fail loudly — silently idling here looks identical to "caught up".
+    const REORG_MARGIN = 16n;
+    if (fromBlock - head > REORG_MARGIN) {
+      throw new Error(
+        `RPC head ${head} is ${fromBlock - head} blocks behind cursor ${fromBlock} — ` +
+          `stale/implausible head; check the BASE_RPC_URL provider`
+      );
+    }
     console.log(`[${kind}] nothing new (head ${head} < from ${fromBlock})`);
     return;
   }
