@@ -347,9 +347,9 @@
       <div class="rate-row"><span class="rate-key">Service fee (worst case)</span><span class="rate-val" id="q-service">—</span></div>
     </div>
     <p style="font-size:12px; color:var(--text3); margin-top:10px; line-height:1.5;">
-      Two fees apply: a <strong style="color:var(--text2);">20bp swap fee</strong> taken inside the
-      pool (already in the rate above), and a flat <strong style="color:var(--text2);">service
-      fee</strong> of 0.05 USDS + 0.10 USDS charged by the contract. The keeper runs <strong
+      Two fees apply on top of the rate: a <strong style="color:var(--text2);">20bp swap fee</strong>
+      charged inside the swap/hook, and a flat <strong style="color:var(--text2);">service fee</strong>
+      of 0.05 USDS + 0.10 USDS charged by the contract. The keeper runs <strong
       style="color:var(--text2);">every ~2 minutes</strong> and executes <strong
       style="color:var(--text2);">all pending swaps in one batch</strong>, and that fixed 0.10 USDS
       is <strong style="color:var(--text2);">split across every swap in the batch</strong> — so the
@@ -447,7 +447,7 @@ const SEL_BALANCE_OF       = '0x70a08231';
 
 const S_MAX    = 0.05;
 const D_50     = 0.05;
-const FLAT_FEE = 0.002; // 20bp swap fee taken inside the v4 pool (folded into mint/redeem price)
+const SWAP_FEE = 0.002; // 20bp fee charged inside the swap/hook — ADDITIONAL to the oracle price
 
 // Flat service fee charged by the forwarder contract on top of the swap (ForwarderMinter/Redeemer).
 // Total per batch = FEE_USDS·n + FIXED_FEE_USDS; the fixed part is split across the n swaps in the
@@ -561,10 +561,11 @@ async function fetchRate() {
     const solvency    = Number(solvencyWad) / Number(WAD);
     const twap        = Number(twapWad) / Number(WAD);
     const sp          = spreadFn(solvency);
-    // Spread is applied symmetrically around the TWAP mid: minting pays above, redeeming receives
-    // below. At full solvency sp≈0, so both reduce to twap·(1±fee) — matches the fork-test bounds.
-    const mintPrice   = twap * (1 + sp + FLAT_FEE);
-    const redeemPrice = twap * (1 - sp - FLAT_FEE);
+    // Oracle/vault price: the solvency spread applied symmetrically around the TWAP mid (mint pays
+    // above, redeem receives below). The 20bp swap fee is NOT in here — it's charged inside the
+    // swap/hook and deducted separately in the quote.
+    const mintPrice   = twap * (1 + sp);
+    const redeemPrice = twap * (1 - sp);
 
     liveRate = { twap, solvency, sp, mintPrice, redeemPrice, healthy };
 
@@ -768,22 +769,24 @@ function updateQuote() {
     return;
   }
   // Worst case: you're the only swap in the batch (n = 1), so you bear the whole fixed fee.
-  const serviceFee = FEE_USDS + FIXED_FEE_USDS; // USDS, charged by the forwarder contract
+  const serviceFee = FEE_USDS + FIXED_FEE_USDS; // USDS, charged by the forwarder contract (n = 1)
   if (DIR === 'mint') {
-    const forSwap = Math.max(0, amt - serviceFee);   // USDS left to swap after the flat fee
-    const gbpfOut = forSwap / liveRate.mintPrice;     // mintPrice already folds in the 20bp
+    const forSwap = Math.max(0, amt - serviceFee);          // USDS left after the flat service fee
+    const swapFee = forSwap * SWAP_FEE;                     // 20bp taken inside the swap/hook
+    const gbpfOut = (forSwap - swapFee) / liveRate.mintPrice;
     document.getElementById('q-send').textContent    = amt.toFixed(2) + ' USDS';
     document.getElementById('q-receive').textContent = gbpfOut.toFixed(4) + ' GBPF';
     document.getElementById('q-rate').textContent    = liveRate.mintPrice.toFixed(4);
-    document.getElementById('q-swapfee').textContent = (forSwap * FLAT_FEE).toFixed(4) + ' USDS';
+    document.getElementById('q-swapfee').textContent = swapFee.toFixed(4) + ' USDS';
     document.getElementById('q-service').textContent = serviceFee.toFixed(2) + ' USDS';
   } else {
-    const gross   = amt * liveRate.redeemPrice;       // redeemPrice already folds in the 20bp
-    const usdsOut = Math.max(0, gross - serviceFee);  // flat fee taken from the USDS output
+    const gross   = amt * liveRate.redeemPrice;             // USDS at the oracle price, before fees
+    const swapFee = gross * SWAP_FEE;                       // 20bp taken inside the swap/hook
+    const usdsOut = Math.max(0, gross - swapFee - serviceFee);
     document.getElementById('q-send').textContent    = amt.toFixed(4) + ' GBPF';
     document.getElementById('q-receive').textContent = usdsOut.toFixed(2) + ' USDS';
     document.getElementById('q-rate').textContent    = liveRate.redeemPrice.toFixed(4);
-    document.getElementById('q-swapfee').textContent = (amt * liveRate.twap * FLAT_FEE).toFixed(4) + ' USDS';
+    document.getElementById('q-swapfee').textContent = swapFee.toFixed(4) + ' USDS';
     document.getElementById('q-service').textContent = serviceFee.toFixed(2) + ' USDS';
   }
 }
