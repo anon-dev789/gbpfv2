@@ -436,8 +436,8 @@
 const BASE_RPC = 'https://mainnet.base.org';
 
 const ORACLE = '0x9c66F3F8a102d6Bf3EeaEAAe5d9ECAe88985eB2F';
-const VAULT  = '0xA9a831a348D0Db372cf75dd7C082cFF67A453498';
-const GBPF   = '0x1817FD23ceF7Da47DF934fdc880d72e653786770';
+const VAULT  = '0x5de65a46EE6Cb284Af9cAeF85FE693752a23F609';
+const GBPF   = '0x836f4b0e5774eDb800F4e0741E825Ee6F8cD6bf6';
 const USDS   = '0x820C137fa70C8691f0e44Dc420a5e53c168921Dc';
 
 const SEL_UPDATE           = '0xa2e62045';
@@ -470,7 +470,7 @@ const FORWARDER_INIT_HASH = '0x12bf77d0243b216de5f0dc2feca23fb449ae21e3e071c70e2
 
 const DIRECTIONS = {
   mint: {
-    factory: '0x163e95500660bDF76D7F2dD97bb6F47d947C7226', // ForwarderMinter (Base)
+    factory: '0xd65d1C18DdEdF90D488C27EB7F3e1495cf70d906', // ForwarderMinter (Base)
     initHash: FORWARDER_INIT_HASH,
     send: { sym: 'USDS', addr: USDS },
     recv: { sym: 'GBPF', addr: GBPF },
@@ -478,7 +478,7 @@ const DIRECTIONS = {
     priceLabel: 'Mint price',
   },
   redeem: {
-    factory: '0x5b1c7dF048a7E4EbEA285B64Cb1FCa675044c9E2', // ForwarderRedeemer (Base)
+    factory: '0xad6c5222c087CAd4dCBb4F9c2933107740ae3853', // ForwarderRedeemer (Base)
     initHash: FORWARDER_INIT_HASH,
     send: { sym: 'GBPF', addr: GBPF },
     recv: { sym: 'USDS', addr: USDS },
