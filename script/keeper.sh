@@ -20,9 +20,11 @@ set -uo pipefail
 RPC="${BASE_RPC_URL:-https://mainnet.base.org}"
 KEY="${KEEPER_PRIVATE_KEY:?KEEPER_PRIVATE_KEY not set}"
 
-# Live addresses (Base 8453) — see DEPLOYMENT.md.
-BUFFER_VAULT=0x6aB1571CCd465568612a8a306490385CbF58B7EC
-CORE_VAULT=0xA9a831a348D0Db372cf75dd7C082cFF67A453498
+# Core vault (Base 8453) — SpreadCurve-fix redeploy. See DEPLOYMENT.md.
+CORE_VAULT=0x5de65a46EE6Cb284Af9cAeF85FE693752a23F609
+# Gateway BufferVault: the public V3 GBPF/USDS pool was NOT redeployed for the new GBPF, so the
+# rebalance() heartbeat is disabled below. Set a new BUFFER_VAULT and re-enable it if/when the
+# Gateway is redeployed (script/GatewayDeploy.s.sol).
 
 KEEPER_ADDR=$(cast wallet address --private-key "$KEY")
 echo "keeper: $KEEPER_ADDR  rpc: ${RPC%%\?*}"
@@ -46,6 +48,7 @@ try() {
 }
 
 rc=0
-try rebalance "$BUFFER_VAULT" "rebalance()" || rc=1
+# Gateway rebalance disabled — the Gateway was not redeployed for the new GBPF (see above).
+# try rebalance "$BUFFER_VAULT" "rebalance()" || rc=1
 try flush "$CORE_VAULT" "flush()" || rc=1
 exit $rc
