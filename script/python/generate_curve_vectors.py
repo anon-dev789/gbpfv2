@@ -3,7 +3,7 @@
 
 Reference implementation of the immutable spread curve:
 
-    spread(s) = S_MAX * tanh( ((1 - s) / D_50)^2 ) * sign(1 - s)
+    spread(s) = -S_MAX * tanh( ((1 - s) / D_50)^2 )  for s < 1, else 0  (one-sided defensive discount)
 
 with S_MAX = 0.05 and D_50 = 0.05.
 
@@ -28,11 +28,13 @@ def spread_reference(solvency: float) -> float:
     """Exact reference using Python's stdlib math.tanh (double precision)."""
     if solvency > MAX_SOLVENCY:
         raise ValueError(f"solvency {solvency} exceeds MAX_SOLVENCY {MAX_SOLVENCY}")
-    d = 1.0 - solvency
-    if d == 0:
+    # One-sided defensive discount: negative below peg, zero at/above peg. A surplus is not a risk
+    # to defend against, so there is no spread there — see SpreadCurve.sol.
+    if solvency >= 1.0:
         return 0.0
+    d = 1.0 - solvency
     arg = (d * d) / (D_50 * D_50)
-    return S_MAX * math.tanh(arg) * (1.0 if d > 0 else -1.0)
+    return -S_MAX * math.tanh(arg)
 
 
 def wad(x: float) -> int:

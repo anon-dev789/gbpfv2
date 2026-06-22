@@ -108,8 +108,9 @@ contract Bootstrap is Script {
     // redeploy). See DEPLOYMENT.md. (Supersedes the abandoned 53980bf deploy.)
     // ============================================================================================
 
-    address internal constant GBPF = 0x1817FD23ceF7Da47DF934fdc880d72e653786770;
-    address internal constant HOOK = 0x5613c279E8Db9815DBD0CdFbd10515EAbD350088;
+    // Core addresses (GBPF, HOOK) are read from env at runtime — set them to the freshly deployed
+    // core (GBPF_ADDR, HOOK_ADDR). No defaults: a missing env var reverts rather than targeting a
+    // stale core.
 
     // Base mainnet infra (matches Deploy.s.sol).
     address internal constant USDS_TOKEN = 0x820C137fa70C8691f0e44Dc420a5e53c168921Dc;
@@ -125,6 +126,11 @@ contract Bootstrap is Script {
     uint160 internal constant SQRT_PRICE_X96_ONE = 79228162514264337593543950336;
 
     function run() external {
+        address GBPF = vm.envOr("GBPF_ADDR", address(0));
+        address HOOK = vm.envOr("HOOK_ADDR", address(0));
+        require(GBPF != address(0) && GBPF.code.length > 0, "set GBPF_ADDR env to the new GBPF");
+        require(HOOK != address(0) && HOOK.code.length > 0, "set HOOK_ADDR env to the new Hook");
+
         bool usdsIsToken0 = USDS_TOKEN < GBPF;
 
         // Canonical PoolKey — must hash-equal the hook's immutable POOL_KEY_HASH:

@@ -38,9 +38,8 @@ it tilts the rate to nudge the system back to health:
 
 | Vault state | What it does to the rate |
 |---|---|
-| **Exactly 100%** | Spread is **zero**. You trade right at the reference rate (just the 20bp fee). |
-| **Below 100%** (shortfall) | **Minting gets expensive, redeeming gets favourable.** This discourages new GBPF and rewards people for handing GBPF back — shrinking what the vault owes and healing the shortfall. |
-| **Above 100%** (surplus) | **Minting gets favourable, redeeming gets expensive.** This pulls in new money and discourages exits, spreading the surplus across more tokens. |
+| **100% or above** (fully backed / surplus) | Spread is **zero**. You trade right at the reference rate (just the 20bp fee). A surplus is not a risk, so the curve doesn't intervene — and the surplus stays in the vault rather than being paid out to whoever redeems first. |
+| **Below 100%** (shortfall) | **Minting gets cheaper, redeeming takes a haircut.** This pulls in new collateral and stops redeemers from extracting more than the backing behind each token — so redemption *heals* the shortfall instead of draining reserves. |
 
 ### The "curve" — why it's a smooth S-shape, not a switch
 
@@ -65,23 +64,24 @@ drifted ~5% away, the spread is around 3.8%; and it can never exceed 5%.
 ## The one big idea to take away
 
 **GBPF does not promise "1 token = £1, always."** It promises something stronger and
-more honest: the protocol is *always solvent against its actual reserves*, and it always
-lets you redeem at a price that reflects the **real backing per token** — generous when
-there's a surplus, fair-but-discounted when there's a shortfall. The spread is the
-self-correcting force that keeps it healthy, and because it makes the rate move
-predictably with the vault's health, arbitrage traders naturally do the rebalancing
-work — and when they do, they *shrink the protocol's liabilities rather than drain its
+more honest: the protocol is *always solvent against its actual reserves*. When fully
+backed or in surplus you trade right at the reference rate (just the 20bp fee); when
+there's a shortfall, redemption is **fair-but-discounted** — a haircut toward the real
+backing per token. That one-sided discount is the self-correcting force: it makes minting
+cheap (pulling collateral in) and stops redeemers from taking more than the backing behind
+each token, so arbitrage traders *shrink the protocol's liabilities rather than drain its
 reserves*.
 
-So the rate a user sees = **reference oracle rate, ± a health-based spread, ± a fixed
-20bp fee.**
+So the rate a user sees = **reference oracle rate, − a shortfall-only discount (zero when
+fully backed), ± a fixed 20bp fee.** The 20bp fee always applies; the discount only kicks
+in below 100% solvency.
 
 ---
 
 ### Where this lives in the code
 
 - Flat fee: `FLAT_FEE_WAD = 2e15` (20bp) — `src/Hook.sol`
-- Spread curve: `spread(s) = S_MAX · tanh(((1 - s) / D_50)²) · sign(1 - s)` — `src/SpreadCurve.sol`
-  (`S_MAX = 5%`, `D_50 = 5%`)
+- Spread curve (one-sided): `spread(s) = -S_MAX · tanh(((1 - s) / D_50)²)` for `s < 1`, else `0`
+  — `src/SpreadCurve.sol` (`S_MAX = 5%`, `D_50 = 5%`)
 - Price multipliers: `WAD + spread ± FLAT_FEE_WAD` — `src/Hook.sol`
 - Design rationale: `HOOK_DESIGN.md`, `design_doc.md`

@@ -47,39 +47,55 @@ Mint and redeem are priced around the oracle rate with a spread that's a continu
 **Formula (immutable):**
 
 ```
-spread(s) = S_max · tanh( ((1 - s) / d_50)² ) · sign(1 - s)
+spread(s) = -S_max · tanh( ((1 - s) / d_50)² )   for s < 1   (a discount)
+spread(s) = 0                                     for s ≥ 1   (no intervention)
 ```
 
+The curve is **one-sided**: a defensive discount that is active only below 100% solvency. A surplus
+is not a risk to defend against, so there is no spread at or above peg.
+
 **Parameters (immutable):**
-- `S_max = 5%` (500bp) — cap on one-sided spread; max round-trip ~10%
-- `d_50 = 5%` — solvency deviation at which spread reaches `tanh(1) · S_max ≈ 380bp`
+- `S_max = 5%` (500bp) — cap on the one-sided discount; max shortfall round-trip ~10%
+- `d_50 = 5%` — solvency deviation at which the discount reaches `tanh(1) · S_max ≈ 380bp`
 - **Flat fee: 20bp each side**, additive to the curve
 
-**Sanity values (one-sided spread, excluding flat fee) — verified against the SpreadCurve library:**
+**Sanity values (discount magnitude, excluding flat fee) — verified against the SpreadCurve library.**
+The spread is **negative below 100%** (a discount on GBPF: cheaper mint, redeem haircut) and **zero
+at and above 100%**:
 
 | Solvency | Spread |
 |---|---|
-| 100.0% | 0 bp |
-| 99.0%  | ~20 bp |
-| 97.0%  | ~172.6 bp |
-| 95.0%  | ~380.8 bp |
-| 90.0%  | ~499.7 bp |
-| ≤80%   | 500 bp (capped at S_MAX) |
+| ≥100.0% | 0 bp |
+| 99.0%  | −20 bp |
+| 97.0%  | −172.6 bp |
+| 95.0%  | −380.8 bp |
+| 90.0%  | −499.7 bp |
+| ≤80%   | −500 bp (capped at −S_MAX) |
 
 **Properties:**
-- `spread = 0` and gradient = 0 at `s = 1.0` (the `d²` term gives "nearly flat at peg")
-- Symmetric across 100% via `sign(1-s)`
-- `C^∞` smooth — no kinks for arbitrageurs to camp on
-- Bounded by `±S_max` — the worst-case haircut for any redeemer is knowable
+- `spread = 0` and gradient = 0 at `s = 1.0` (the `d²` term gives "nearly flat at peg"); because the
+  curve and its first derivative are both zero there, clamping the surplus side to 0 introduces no
+  kink — it is C¹-smooth across the peg.
+- One-sided: `spread ≤ 0` everywhere; strictly negative only below peg.
+- Bounded by `−S_max` — the worst-case redeemer haircut is knowable.
 
 **Behaviour by solvency regime:**
-- **Below 100%:** mint expensive, redeem favourable → discourages new supply, attracts redemption, shrinks liability.
-- **At 100%:** symmetric flat fee only.
-- **Above 100%:** mint favourable, redeem expensive → attracts new supply, discourages exits, dilutes surplus across more tokens.
+- **Below 100% (shortfall):** mint favourable (discounted), redeem discounted (haircut) → pulls in
+  new collateral and stops redeemers extracting more than the backing behind each token, so
+  redemption *heals* the shortfall instead of draining reserves.
+- **At/above 100% (fully backed or surplus):** no spread — trade at the oracle rate (± the flat
+  fee). A surplus is not a risk to defend against; leaving it untouched retains it in the vault
+  rather than paying it out to whoever redeems first.
 
-**Key property:** when secondary market price drifts below oracle due to perceived under-collateralisation, arbitrageurs buy GBPF cheaply on secondary and redeem against the protocol for premium USDS. The arbitrage *reduces* the protocol's liability rather than draining its reserves.
+**Key property:** at a shortfall the protocol redeems at a *discount* (a haircut toward actual
+backing), so an arbitrageur who buys GBPF cheaply on the secondary market and redeems against the
+protocol cannot extract more than the collateral backing each token. The arbitrage shrinks supply
+toward the collateral ratio and *reduces* the protocol's liability without draining reserves. The
+inverse — paying redeemers a premium at a shortfall — lets arbitrage drain the vault in a death
+spiral (`ds = (dS/S)·(s − r) < 0` whenever payout `r` exceeds solvency `s`); that inversion was the
+original bug this sign convention exists to prevent.
 
-**No hard peg, hard solvency.** GBPF does not promise 1 token = £1 at all times. It promises that the protocol is always solvent against its on-chain reserves, with redemption priced honestly against actual collateral.
+**No hard peg, soft solvency.** GBPF does not promise 1 token = £1 at all times. It prices mint/redeem against on-chain reserves and discounts redemption toward backing during a shortfall — but the discount is capped at the 5% one-sided spread, so it is *not* fully solvent-by-construction in deep distress (redemptions below ~95% solvency still draw slightly more than backing). A redeem-at-NAV mechanism would close that gap; see the residual-risk note in `SECURITY.md`.
 
 **Why this curve shape (and not the obvious alternatives):**
 - Piecewise-flat-around-peg creates a kink at the band edge (arbitrageurs target kinks) and a no-restoring-force dead zone inside the band.
@@ -240,7 +256,7 @@ Atomic with deployment:
 
 - **Permissionless:** no admin functions, no KYC, no whitelisting on mint/redeem
 - **Bounded external recipient:** beneficiary multisig has immutable claim on defined revenue share but no operational control
-- **Solvent by construction:** protocol can never owe more than it holds, by mechanism design
+- **Bounded overpayment:** redemption is haircut toward backing during a shortfall, capped at the 5% one-sided spread — not fully solvent-by-construction in deep distress (see `SECURITY.md` residual risks)
 - **Transparent:** solvency ratio publicly computable every block
 - **Self-funding (partially):** 50% of yield plus 100% of curve-spread revenue compound into reserves
 - **MEV-resistant:** layered defences — flat fee, curve spread, TWAP, circuit-breaker, sequencer-uptime feed

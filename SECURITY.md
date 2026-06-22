@@ -19,10 +19,15 @@ entirely by the code and by the on-chain state of its external dependencies.
 
 The high-level commitments the protocol makes:
 
-1. **Solvent by construction.** The protocol can never owe more than it holds, at any solvency level,
-   under any mint/redeem sequence.
-2. **Bounded loss for the last redeemer.** Even in deep distress, redemption is priced honestly against
-   reserves; the worst-case spread is capped at `S_MAX = 5%` one-sided.
+1. **Bounded overpayment (not solvent-by-construction).** The redeem haircut is capped at
+   `S_MAX = 5%` one-sided, so at a shortfall the protocol can pay redeemers up to ~5% more than the
+   true per-token backing. Below ~95% solvency redemptions therefore still draw slightly more than
+   backing — a slow drain. This is a bounded, documented residual risk, mitigated by the deviation
+   circuit-breaker (bounds how fast solvency can fall), the mint-side discount (pulls collateral in),
+   and the redeem-side discount (discourages draining). The protocol is *not* solvent-by-construction
+   in deep distress; a redeem-at-NAV mechanism would be required for that (see ROLLOUT notes).
+2. **Bounded, knowable haircut for the last redeemer.** Even in deep distress the one-sided spread is
+   capped at `S_MAX = 5%`, so the worst-case redeemer haircut (and mint premium) is knowable in advance.
 3. **No silent loss of funds.** Beneficiary withdrawals can only flow to the hardcoded multisig.
    Vault funds can only leave via legitimate mint/redeem/beneficiary-withdraw flows.
 4. **Availability under normal conditions.** Mint/redeem succeed whenever oracles are healthy and the
@@ -155,10 +160,10 @@ The library is responsible for these properties holding for **every** input in i
 | Invariant | Verified by |
 |---|---|
 | `|spread(s)|` ≤ `S_MAX` for all `s ∈ [0, 10·WAD]` | `testFuzz_spread_bounded` (10k runs), `invariant_spread_always_bounded` (8192 calls) |
-| `spread(1·WAD) == 0` | `test_spread_at_100pct_is_zero` |
-| `spread(1+d) == -spread(1-d)` for valid `d` | `testFuzz_spread_symmetric` (10k runs) |
-| Monotonic in solvency on both sides of peg | `testFuzz_spread_monotonic_below_peg` / `_above_peg` (10k each) |
-| `spread` sign matches `sign(1 - s)` (mod rounding-to-zero near peg) | `testFuzz_spread_sign` (10k runs) |
+| `spread(s) == 0` for all `s ≥ 1·WAD` (one-sided: no surplus-side spread) | `test_spread_at_100pct_is_zero`, `testFuzz_spread_zero_at_or_above_peg`, `test_surplus_spread_is_zero` |
+| Monotonic discount below peg (deeper discount as solvency falls) | `testFuzz_spread_monotonic_below_peg` (10k runs) |
+| `spread(s) ≤ 0` everywhere; strictly negative only below peg | `testFuzz_spread_sign` (10k runs) |
+| Shortfall is a discount, never a premium (anti-drain): redeem priced below peg at a shortfall | `test_shortfall_spread_is_discount`, `test_shortfall_redeem_priced_below_peg`, `test_shortfall_mint_not_premium` |
 | `tanhWad(x)` ≤ `WAD` for all `x ≥ 0` | `testFuzz_tanh_bounded`, `invariant_tanh_always_bounded` |
 | `tanhWad(x)` monotonically non-decreasing | `testFuzz_tanh_monotonic` |
 | `tanhWad(x)` saturates at exactly `WAD` for `x ≥ 20·WAD` | `test_tanh_saturates` |

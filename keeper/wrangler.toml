@@ -17,19 +17,19 @@ id = "95198a368dad46f1b894476e9d3e4782"
 [vars]
 # Base mainnet.
 CHAIN_ID = "8453"
-# ForwarderMinter / ForwarderRedeemer (live on Base — DEPLOYMENT.md).
-MINTER = "0x163e95500660bDF76D7F2dD97bb6F47d947C7226"
-REDEEMER = "0x5b1c7dF048a7E4EbEA285B64Cb1FCa675044c9E2"
-# Live core tokens.
+# ForwarderMinter / ForwarderRedeemer — SpreadCurve-fix redeploy (new core, Base 8453).
+MINTER = "0xd65d1C18DdEdF90D488C27EB7F3e1495cf70d906"
+REDEEMER = "0xad6c5222c087CAd4dCBb4F9c2933107740ae3853"
+# Core tokens. USDS unchanged; GBPF is the new token from the redeploy.
 USDS = "0x820C137fa70C8691f0e44Dc420a5e53c168921Dc"
-GBPF = "0x1817FD23ceF7Da47DF934fdc880d72e653786770"
+GBPF = "0x836f4b0e5774eDb800F4e0741E825Ee6F8cD6bf6"
 # Multicall3 (same address on Base).
 MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11"
-# Block to start scanning from. Kept recent (a few minutes ago) so eth_getLogs stays inside the
-# public RPC's non-archive window — historical ranges are rejected as "archive requests". This
-# means deposits made before this block are NOT auto-discovered from logs. (Forwarders deployed at
-# block 47608520.)
-START_BLOCK = "47619000"
+# Block to start scanning from. Set to just before the new forwarders' deploy block (~47657814) so
+# no deposits can exist before it. NOTE: the keeper needs an RPC that serves eth_getLogs over its
+# scan range — the public/stale RPCs hit the "archive requests" wall; set BASE_RPC_URL to a healthy
+# archive endpoint (secret).
+START_BLOCK = "47657810"
 # Don't scan more than this many blocks in one tick (catch-up bound).
 MAX_RANGE = "3000"
 # Skip sweeping a token's deposit until its waiting total is at least this (wei) — avoids paying

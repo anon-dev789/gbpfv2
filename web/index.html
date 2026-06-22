@@ -385,7 +385,7 @@
       <div class="stat">
         <div class="stat-label">Spread</div>
         <div class="stat-value" id="s-spread">—</div>
-        <div class="stat-sub">health surcharge</div>
+        <div class="stat-sub" id="s-spread-sub">discount below 100%</div>
       </div>
       <div class="stat">
         <div class="stat-label" id="s-price-label">Mint price</div>
@@ -436,8 +436,8 @@
 const BASE_RPC = 'https://mainnet.base.org';
 
 const ORACLE = '0x9c66F3F8a102d6Bf3EeaEAAe5d9ECAe88985eB2F';
-const VAULT  = '0xA9a831a348D0Db372cf75dd7C082cFF67A453498';
-const GBPF   = '0x1817FD23ceF7Da47DF934fdc880d72e653786770';
+const VAULT  = '0x5de65a46EE6Cb284Af9cAeF85FE693752a23F609';
+const GBPF   = '0x836f4b0e5774eDb800F4e0741E825Ee6F8cD6bf6';
 const USDS   = '0x820C137fa70C8691f0e44Dc420a5e53c168921Dc';
 
 const SEL_UPDATE           = '0xa2e62045';
@@ -470,7 +470,7 @@ const FORWARDER_INIT_HASH = '0x12bf77d0243b216de5f0dc2feca23fb449ae21e3e071c70e2
 
 const DIRECTIONS = {
   mint: {
-    factory: '0x163e95500660bDF76D7F2dD97bb6F47d947C7226', // ForwarderMinter (Base)
+    factory: '0xd65d1C18DdEdF90D488C27EB7F3e1495cf70d906', // ForwarderMinter (Base)
     initHash: FORWARDER_INIT_HASH,
     send: { sym: 'USDS', addr: USDS },
     recv: { sym: 'GBPF', addr: GBPF },
@@ -478,7 +478,7 @@ const DIRECTIONS = {
     priceLabel: 'Mint price',
   },
   redeem: {
-    factory: '0x5b1c7dF048a7E4EbEA285B64Cb1FCa675044c9E2', // ForwarderRedeemer (Base)
+    factory: '0xad6c5222c087CAd4dCBb4F9c2933107740ae3853', // ForwarderRedeemer (Base)
     initHash: FORWARDER_INIT_HASH,
     send: { sym: 'GBPF', addr: GBPF },
     recv: { sym: 'USDS', addr: USDS },
@@ -528,11 +528,13 @@ function computeSolvency(sUsds, pendingBen, ssrRate, usdsClaim, twap, supply) {
 }
 
 function spreadFn(solvency) {
+  // One-sided solvency spread, mirroring src/SpreadCurve.sol: a discount (negative) below 100%
+  // solvency, zero at/above. Applied to BOTH mint and redeem, so a shortfall lowers the whole rate
+  // (cheaper mint, redeem haircut); a surplus is left untouched.
+  if (solvency >= 1.0) return 0;
   const d = 1.0 - solvency;
-  if (d === 0) return 0;
   const arg = (d / D_50) ** 2;
-  const mag = S_MAX * Math.tanh(arg);
-  return d > 0 ? mag : -mag;
+  return -S_MAX * Math.tanh(arg);
 }
 
 async function fetchRate() {
@@ -561,11 +563,11 @@ async function fetchRate() {
     const solvency    = Number(solvencyWad) / Number(WAD);
     const twap        = Number(twapWad) / Number(WAD);
     const sp          = spreadFn(solvency);
-    // Oracle/vault price: the solvency spread applied symmetrically around the TWAP mid (mint pays
-    // above, redeem receives below). The 20bp swap fee is NOT in here — it's charged inside the
-    // swap/hook and deducted separately in the quote.
+    // One-sided solvency spread (sp <= 0): below 100% it discounts the whole rate — cheaper mint
+    // AND a redeem haircut (both move down together); zero at/above peg. The 20bp swap fee and the
+    // flat service fee are applied separately in the quote.
     const mintPrice   = twap * (1 + sp);
-    const redeemPrice = twap * (1 - sp);
+    const redeemPrice = twap * (1 + sp);
 
     liveRate = { twap, solvency, sp, mintPrice, redeemPrice, healthy };
 
@@ -639,6 +641,11 @@ function updateChrome() {
   document.querySelectorAll('.tok-recv').forEach(e => e.textContent = cfg.recv.sym);
   document.querySelectorAll('.rf-contract-name').forEach(e => e.textContent = cfg.contractName);
   document.querySelectorAll('.min-batch').forEach(e => e.textContent = `${minBatchStr()} ${cfg.send.sym}`);
+
+  // The shortfall spread lowers the price for both sides, but that reads as a discount when buying
+  // (you pay less) and a haircut when redeeming (you receive less).
+  document.getElementById('s-spread-sub').textContent =
+    DIR === 'mint' ? 'buyer discount below 100%' : 'redeemer haircut below 100%';
 
   document.getElementById('amount-input').placeholder = `Amount of ${cfg.send.sym} to send`;
   document.getElementById('forwarder-addr').textContent = cfg.factory;
