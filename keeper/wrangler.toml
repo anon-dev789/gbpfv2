@@ -3,9 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Poll every 2 minutes. Cloudflare cron minimum is 1 minute.
+# Poll every 4 minutes. Cloudflare cron minimum is 1 minute.
 [triggers]
-crons = ["*/2 * * * *"]
+crons = ["*/4 * * * *"]
 
 # Persistent cursor + pending-candidate set. Create with:
 #   wrangler kv namespace create KEEPER_KV
