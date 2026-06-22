@@ -385,7 +385,7 @@
       <div class="stat">
         <div class="stat-label">Spread</div>
         <div class="stat-value" id="s-spread">—</div>
-        <div class="stat-sub">health surcharge</div>
+        <div class="stat-sub">discount below 100%</div>
       </div>
       <div class="stat">
         <div class="stat-label" id="s-price-label">Mint price</div>
@@ -528,11 +528,13 @@ function computeSolvency(sUsds, pendingBen, ssrRate, usdsClaim, twap, supply) {
 }
 
 function spreadFn(solvency) {
+  // One-sided solvency spread, mirroring src/SpreadCurve.sol: a discount (negative) below 100%
+  // solvency, zero at/above. Applied to BOTH mint and redeem, so a shortfall lowers the whole rate
+  // (cheaper mint, redeem haircut); a surplus is left untouched.
+  if (solvency >= 1.0) return 0;
   const d = 1.0 - solvency;
-  if (d === 0) return 0;
   const arg = (d / D_50) ** 2;
-  const mag = S_MAX * Math.tanh(arg);
-  return d > 0 ? mag : -mag;
+  return -S_MAX * Math.tanh(arg);
 }
 
 async function fetchRate() {
@@ -561,11 +563,11 @@ async function fetchRate() {
     const solvency    = Number(solvencyWad) / Number(WAD);
     const twap        = Number(twapWad) / Number(WAD);
     const sp          = spreadFn(solvency);
-    // Oracle/vault price: the solvency spread applied symmetrically around the TWAP mid (mint pays
-    // above, redeem receives below). The 20bp swap fee is NOT in here — it's charged inside the
-    // swap/hook and deducted separately in the quote.
+    // One-sided solvency spread (sp <= 0): below 100% it discounts the whole rate — cheaper mint
+    // AND a redeem haircut (both move down together); zero at/above peg. The 20bp swap fee and the
+    // flat service fee are applied separately in the quote.
     const mintPrice   = twap * (1 + sp);
-    const redeemPrice = twap * (1 - sp);
+    const redeemPrice = twap * (1 + sp);
 
     liveRate = { twap, solvency, sp, mintPrice, redeemPrice, healthy };
 
