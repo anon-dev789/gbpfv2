@@ -341,10 +341,21 @@
     <input type="number" id="amount-input" placeholder="Amount of USDS to send" min="0" step="any" oninput="updateQuote()" style="margin-bottom: 10px;" />
     <div id="quote-rows">
       <div class="rate-row"><span class="rate-key">You send</span><span class="rate-val" id="q-send">—</span></div>
-      <div class="rate-row"><span class="rate-key">You receive</span><span class="rate-val" id="q-receive">—</span></div>
+      <div class="rate-row"><span class="rate-key">You receive (worst case)</span><span class="rate-val" id="q-receive">—</span></div>
       <div class="rate-row"><span class="rate-key">Rate (USDS per GBPF)</span><span class="rate-val" id="q-rate">—</span></div>
-      <div class="rate-row"><span class="rate-key">Fee (20bp execution)</span><span class="rate-val" id="q-fee">—</span></div>
+      <div class="rate-row"><span class="rate-key">Swap fee (20bp, in pool)</span><span class="rate-val" id="q-swapfee">—</span></div>
+      <div class="rate-row"><span class="rate-key">Service fee (worst case)</span><span class="rate-val" id="q-service">—</span></div>
     </div>
+    <p style="font-size:12px; color:var(--text3); margin-top:10px; line-height:1.5;">
+      Two fees apply: a <strong style="color:var(--text2);">20bp swap fee</strong> taken inside the
+      pool (already in the rate above), and a flat <strong style="color:var(--text2);">service
+      fee</strong> of 0.05 USDS + 0.10 USDS charged by the contract. The keeper runs <strong
+      style="color:var(--text2);">every ~2 minutes</strong> and executes <strong
+      style="color:var(--text2);">all pending swaps in one batch</strong>, and that fixed 0.10 USDS
+      is <strong style="color:var(--text2);">split across every swap in the batch</strong> — so the
+      more people swapping alongside you, the less each pays. The figure above is the worst case:
+      you're the only swap in the batch.
+    </p>
 
     <div class="divider"></div>
 
@@ -436,7 +447,13 @@ const SEL_BALANCE_OF       = '0x70a08231';
 
 const S_MAX    = 0.05;
 const D_50     = 0.05;
-const FLAT_FEE = 0.002;
+const FLAT_FEE = 0.002; // 20bp swap fee taken inside the v4 pool (folded into mint/redeem price)
+
+// Flat service fee charged by the forwarder contract on top of the swap (ForwarderMinter/Redeemer).
+// Total per batch = FEE_USDS·n + FIXED_FEE_USDS; the fixed part is split across the n swaps in the
+// batch, so a lone swap (n = 1) bears the whole 0.10 — the worst case we quote.
+const FEE_USDS       = 0.05; // feeUsds: per-depositor marginal fee
+const FIXED_FEE_USDS = 0.10; // fixedFeeUsds: per-batch fixed fee, split /n
 const WAD = BigInt('1000000000000000000');
 const RAY = BigInt('1000000000000000000000000000');
 const MAX_SOL = WAD * BigInt(10);
@@ -745,23 +762,29 @@ function updateQuote() {
   const cfg = DIRECTIONS[DIR];
   const amt = parseFloat(document.getElementById('amount-input').value);
   if (!liveRate || isNaN(amt) || amt <= 0) {
-    ['q-send','q-receive','q-rate','q-fee'].forEach(id => {
+    ['q-send','q-receive','q-rate','q-swapfee','q-service'].forEach(id => {
       document.getElementById(id).textContent = '—';
     });
     return;
   }
+  // Worst case: you're the only swap in the batch (n = 1), so you bear the whole fixed fee.
+  const serviceFee = FEE_USDS + FIXED_FEE_USDS; // USDS, charged by the forwarder contract
   if (DIR === 'mint') {
-    const gbpfOut = amt / liveRate.mintPrice;
+    const forSwap = Math.max(0, amt - serviceFee);   // USDS left to swap after the flat fee
+    const gbpfOut = forSwap / liveRate.mintPrice;     // mintPrice already folds in the 20bp
     document.getElementById('q-send').textContent    = amt.toFixed(2) + ' USDS';
     document.getElementById('q-receive').textContent = gbpfOut.toFixed(4) + ' GBPF';
     document.getElementById('q-rate').textContent    = liveRate.mintPrice.toFixed(4);
-    document.getElementById('q-fee').textContent     = (amt * FLAT_FEE).toFixed(4) + ' USDS';
+    document.getElementById('q-swapfee').textContent = (forSwap * FLAT_FEE).toFixed(4) + ' USDS';
+    document.getElementById('q-service').textContent = serviceFee.toFixed(2) + ' USDS';
   } else {
-    const usdsOut = amt * liveRate.redeemPrice;
+    const gross   = amt * liveRate.redeemPrice;       // redeemPrice already folds in the 20bp
+    const usdsOut = Math.max(0, gross - serviceFee);  // flat fee taken from the USDS output
     document.getElementById('q-send').textContent    = amt.toFixed(4) + ' GBPF';
     document.getElementById('q-receive').textContent = usdsOut.toFixed(2) + ' USDS';
     document.getElementById('q-rate').textContent    = liveRate.redeemPrice.toFixed(4);
-    document.getElementById('q-fee').textContent     = (amt * liveRate.twap * FLAT_FEE).toFixed(4) + ' USDS';
+    document.getElementById('q-swapfee').textContent = (amt * liveRate.twap * FLAT_FEE).toFixed(4) + ' USDS';
+    document.getElementById('q-service').textContent = serviceFee.toFixed(2) + ' USDS';
   }
 }
 
