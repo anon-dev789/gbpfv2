@@ -1,9 +1,67 @@
 # GBPF Deployment — Base Mainnet
 
-**Status:** ✅ LIVE on Base (chain 8453). Contracts deployed + initialized, and the
-seed-and-burn bootstrap (pool init + seed swap + burn) completed. The protocol is open for use.
-The **Gateway** (public V3 GBPF/USDS pool + BufferVault, see GATEWAY_DESIGN.md) is also live —
-see "Gateway deployment" below.
+**Status:** ✅ LIVE on Base (chain 8453) — see **CURRENT DEPLOYMENT** immediately below. This is the
+**SpreadCurve sign-fix redeploy (2026-06-22)**; the original deployment (commit 60d3895), documented
+in the rest of this file, is **DEPRECATED — do not use** (it had an inverted spread sign that drained
+the vault at a shortfall).
+
+---
+
+## ⚠️ CURRENT DEPLOYMENT — SpreadCurve sign-fix redeploy (2026-06-22)
+
+The original deploy (commit 60d3895, everything below this section) priced redemptions at a **premium**
+during a shortfall instead of a haircut — `SpreadCurve.spread` had an inverted sign, which drains the
+vault (`ds = (dS/S)(s − r) < 0` when payout `r > s`). This fresh deployment uses the corrected
+**one-sided curve**: a discount below 100% solvency (cheaper mint + redeem haircut), and par ± the
+20bp fee at/above. Fresh GBPF + Vault + Hook, **no collateral/holder migration**; the OracleAdapter is
+reused. Fix: PR #2 (`main`/`release` @ `04bbef1`). Rationale + plan: `ROLLOUT_SPREAD_FIX.md`.
+
+### New core (Base 8453)
+
+| Component | Address |
+|---|---|
+| OracleAdapter (reused) | `0x9c66F3F8a102d6Bf3EeaEAAe5d9ECAe88985eB2F` |
+| GBPF | `0x836f4b0e5774eDb800F4e0741E825Ee6F8cD6bf6` |
+| Vault | `0x5de65a46EE6Cb284Af9cAeF85FE693752a23F609` |
+| Hook | `0xCaa01Ba96895936257af3Cd27E08b7578039C088` |
+
+**Hook CREATE2 salt:** `0x0000000000000000000000000000000000000000000000000000000000004023`
+(low 14 bits = `0x0088` = `BEFORE_SWAP_FLAG | BEFORE_SWAP_RETURNS_DELTA_FLAG` — verified.)
+Canonical V4 PoolKey: `{ currency0: min(USDS,GBPF), currency1: max(USDS,GBPF), fee: 0, tickSpacing: 1, hooks: Hook }`.
+
+### New forwarder batchers (Basescan-verified; owner = deployer EOA `0x398CA93b76806D3517DD3520F1aE09620Fcb5c24`)
+
+| Component | Address |
+|---|---|
+| ForwarderMinter (USDS→GBPF) | `0xd65d1C18DdEdF90D488C27EB7F3e1495cf70d906` |
+| ForwarderRedeemer (GBPF→USDS) | `0xad6c5222c087CAd4dCBb4F9c2933107740ae3853` |
+
+### Deploy transaction hashes (Base, blocks 47657303–47657816)
+
+| Step | Tx |
+|---|---|
+| GBPF | `0x4f42572662da277666d5ed3aede667518c136de6ac85a5fc0b85063b9e5eb911` |
+| Vault | `0x194471a8e775e1c1065f6cfa3542aa8eca662e50a55145d6ba8b24f277db55e3` |
+| Hook (CREATE2) | `0xca5590ab7d66e028e49af8a6e0d8afe5786d26ea9e3597025d50db6b26144704` |
+| vault.initialize | `0x7f13b5faae6cc3368b2d635a19ff6a417fab4aae47cf41c24cebda259a27fbcc` |
+| gbpf.initialize | `0x6330e9414df00d08eafcc8312dfda56814130139227ff5579ed9fffb4edb5646` |
+| Bootstrap: pool init | `0x9bb438be3a38f9facc5d399223d887011b9d5533ef6f2e73b0b8de7beeb0d61b` |
+| Bootstrap: seed swap | `0xea666604233991fb38455ce5ff76f1f6d6e7b68b9ed26d84ec1478fba552aaa7` |
+| ForwarderMinter | `0xf9052e50d04e0877101c4c71f9c1d44e1f7974c9350b19b0658e26dd0b00b89a` |
+| ForwarderRedeemer | `0x12b987551cd998eaa8a569c29db7e0518e01664c833a4c714fef2bb3b41bcefb` |
+
+### Unchanged / repointed
+- **Unchanged:** OracleAdapter (reused), USDS, sUSDS, PoolManager, PSM3, Multicall3, V3/USDC/WETH infra.
+- **Repointed:** keeper `wrangler.toml` (MINTER/REDEEMER/GBPF, `START_BLOCK` 47657810); web (`gbpf-swap` + `gbpfv2/web`); heartbeat `script/keeper.sh` (`CORE_VAULT` → new vault, Gateway `rebalance` disabled).
+- **NOT redeployed:** Gateway (V3 pool + BufferVault — still bound to old GBPF) and Batchers (BatchMinter/BatchRedeemer). Optional; revisit only if needed.
+
+### Pending
+- Cloudflare forwarder-keeper deploy + secrets (healthy archive `BASE_RPC_URL`, `PRIVATE_KEY`).
+- Core re-verify on Basescan (GBPF/Vault/Hook): `FOUNDRY_PROFILE=ci … --resume --verify`.
+
+---
+
+**Everything below describes the original (commit 60d3895) deployment — DEPRECATED, kept for the record.**
 
 ## Gateway deployment (2026-06-11, periphery — NOT part of the immutable core)
 
