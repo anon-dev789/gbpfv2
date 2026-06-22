@@ -74,7 +74,7 @@ After `beforeSwap`:
 
 ## Pricing
 
-All values in WAD (1e18). `twap` is USDS per GBP. `spread(s)` is signed (positive = under-collateralised).
+All values in WAD (1e18). `twap` is USDS per GBP. `spread(s)` is one-sided: negative (a discount) below 100% solvency, zero at/above 100%.
 
 ```
 priceMultiplier_mint   = WAD + spread + FLAT_FEE_WAD

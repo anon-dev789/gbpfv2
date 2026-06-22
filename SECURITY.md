@@ -155,10 +155,10 @@ The library is responsible for these properties holding for **every** input in i
 | Invariant | Verified by |
 |---|---|
 | `|spread(s)|` ≤ `S_MAX` for all `s ∈ [0, 10·WAD]` | `testFuzz_spread_bounded` (10k runs), `invariant_spread_always_bounded` (8192 calls) |
-| `spread(1·WAD) == 0` | `test_spread_at_100pct_is_zero` |
-| `spread(1+d) == -spread(1-d)` for valid `d` | `testFuzz_spread_symmetric` (10k runs) |
-| Monotonic in solvency on both sides of peg | `testFuzz_spread_monotonic_below_peg` / `_above_peg` (10k each) |
-| `spread` sign matches `sign(1 - s)` (mod rounding-to-zero near peg) | `testFuzz_spread_sign` (10k runs) |
+| `spread(s) == 0` for all `s ≥ 1·WAD` (one-sided: no surplus-side spread) | `test_spread_at_100pct_is_zero`, `testFuzz_spread_zero_at_or_above_peg`, `test_surplus_spread_is_zero` |
+| Monotonic discount below peg (deeper discount as solvency falls) | `testFuzz_spread_monotonic_below_peg` (10k runs) |
+| `spread(s) ≤ 0` everywhere; strictly negative only below peg | `testFuzz_spread_sign` (10k runs) |
+| Shortfall is a discount, never a premium (anti-drain): redeem priced below peg at a shortfall | `test_shortfall_spread_is_discount`, `test_shortfall_redeem_priced_below_peg`, `test_shortfall_mint_not_premium` |
 | `tanhWad(x)` ≤ `WAD` for all `x ≥ 0` | `testFuzz_tanh_bounded`, `invariant_tanh_always_bounded` |
 | `tanhWad(x)` monotonically non-decreasing | `testFuzz_tanh_monotonic` |
 | `tanhWad(x)` saturates at exactly `WAD` for `x ≥ 20·WAD` | `test_tanh_saturates` |

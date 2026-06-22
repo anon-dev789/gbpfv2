@@ -4,8 +4,10 @@ pragma solidity 0.8.26;
 import {FixedPointMathLib} from "solady/utils/FixedPointMathLib.sol";
 
 /// @title GBPF spread curve
-/// @notice Pure functions for the immutable mint/redeem spread mechanism.
-///         spread(s) = S_MAX * tanh( ((1 - s) / D_50)^2 ) * sign(1 - s)
+/// @notice Pure functions for the immutable mint/redeem spread mechanism. The spread is a one-sided
+///         DEFENSIVE discount, active only when under-collateralised:
+///             spread(s) = -S_MAX * tanh( ((1 - s) / D_50)^2 )   for s < 1   (a discount)
+///             spread(s) = 0                                      for s >= 1  (no intervention)
 ///         All values are in WAD (1e18 fixed-point).
 library SpreadCurve {
     uint256 internal constant WAD = 1e18;
@@ -30,10 +32,17 @@ library SpreadCurve {
 
     /// @notice Compute the one-sided spread (excluding the flat fee) as a function of solvency.
     /// @param  solvencyWad Solvency ratio in WAD. 1e18 == 100% solvency. Bounded to [0, MAX_SOLVENCY_WAD].
-    /// @return spreadWad Signed spread in WAD.
-    ///         Positive when solvency < 1 (under-collateralised: redeem favourable, mint expensive).
-    ///         Negative when solvency > 1 (over-collateralised: mint favourable, redeem expensive).
-    ///         Zero when solvency == 1.
+    /// @return spreadWad Spread in WAD, always ≤ 0. The Hook ADDS it to the price multiplier
+    ///         (mintPrice = twap·(WAD + spread + flatFee), redeemPrice = twap·(WAD + spread − flatFee)),
+    ///         so a negative spread discounts GBPF on both sides.
+    ///         Negative when solvency < 1 (under-collateralised): GBPF is discounted — minting is
+    ///         cheaper (pulls collateral in to recapitalise) and redemptions take a haircut (so a
+    ///         redeemer cannot extract above-average backing). This is what defends solvency; a
+    ///         premium here would drain the vault in a death spiral — see ds = (dS/S)·(s − r):
+    ///         redemption only heals solvency when payout r < s.
+    ///         Zero when solvency >= 1 (fully/over-collateralised): a surplus is not a risk to
+    ///         defend against, so there is no spread — trade at the oracle rate (± flat fee) and
+    ///         retain the surplus in the vault rather than paying it to whoever redeems first.
     ///
     /// Rounding: mulWad rounds down. Net precision loss is at the sub-wei (1e-15 WAD) level —
     /// far below any economically meaningful threshold. The compounding of rounds in spread()
@@ -43,17 +52,12 @@ library SpreadCurve {
     function spread(uint256 solvencyWad) internal pure returns (int256 spreadWad) {
         if (solvencyWad > MAX_SOLVENCY_WAD) revert SolvencyOutOfRange(solvencyWad);
 
-        // |1 - solvency| computed in uint256 (no signed arithmetic needed).
-        bool undercollateralised = solvencyWad < WAD;
-        uint256 absD;
-        if (undercollateralised) {
-            absD = WAD - solvencyWad;
-        } else if (solvencyWad > WAD) {
-            absD = solvencyWad - WAD;
-        } else {
-            return 0;
-        }
+        // One-sided defensive curve: a discount only when under-collateralised. At or above peg
+        // there is no risk to defend, so no spread (trade at the oracle rate ± flat fee); this also
+        // retains any surplus in the vault rather than paying it to whoever redeems first.
+        if (solvencyWad >= WAD) return 0;
 
+        uint256 absD = WAD - solvencyWad; // > 0 here; bounded by WAD since solvencyWad >= 0
         uint256 dSquared = FixedPointMathLib.mulWad(absD, absD);
         uint256 arg = FixedPointMathLib.mulWad(dSquared, INV_D_50_SQUARED);
 
@@ -62,8 +66,9 @@ library SpreadCurve {
 
         // Safety: mag <= S_MAX = 5e16, far below 2^255. Casting mag to int256 is sound.
         // forge-lint: disable-next-line(unsafe-typecast)
-        int256 magSigned = int256(mag);
-        spreadWad = undercollateralised ? magSigned : -magSigned;
+        // Always a discount (negative): GBPF priced below TWAP so minting is cheaper (pulls
+        // collateral in) and redemptions take a haircut (cannot drain above-average backing).
+        spreadWad = -int256(mag);
     }
 
     /// @notice tanh(x) for x in [0, +inf), result in WAD on [0, 1).
