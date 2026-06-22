@@ -385,7 +385,7 @@
       <div class="stat">
         <div class="stat-label">Spread</div>
         <div class="stat-value" id="s-spread">—</div>
-        <div class="stat-sub">discount below 100%</div>
+        <div class="stat-sub" id="s-spread-sub">discount below 100%</div>
       </div>
       <div class="stat">
         <div class="stat-label" id="s-price-label">Mint price</div>
@@ -641,6 +641,11 @@ function updateChrome() {
   document.querySelectorAll('.tok-recv').forEach(e => e.textContent = cfg.recv.sym);
   document.querySelectorAll('.rf-contract-name').forEach(e => e.textContent = cfg.contractName);
   document.querySelectorAll('.min-batch').forEach(e => e.textContent = `${minBatchStr()} ${cfg.send.sym}`);
+
+  // The shortfall spread lowers the price for both sides, but that reads as a discount when buying
+  // (you pay less) and a haircut when redeeming (you receive less).
+  document.getElementById('s-spread-sub').textContent =
+    DIR === 'mint' ? 'buyer discount below 100%' : 'redeemer haircut below 100%';
 
   document.getElementById('amount-input').placeholder = `Amount of ${cfg.send.sym} to send`;
   document.getElementById('forwarder-addr').textContent = cfg.factory;
