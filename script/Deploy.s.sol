@@ -88,17 +88,25 @@ contract Deploy is Script {
 
         vm.startBroadcast();
 
-        // 2. Deploy OracleAdapter — no circular deps.
-        OracleAdapter oracle = new OracleAdapter(
-            CHAINLINK_GBP_USD,
-            CHAINLINK_SEQUENCER_UPTIME,
-            TWAP_WINDOW,
-            MAX_STALENESS,
-            MAX_STEP_WAD,
-            SEQUENCER_GRACE,
-            COOLDOWN
-        );
-        console2.log("OracleAdapter deployed at", address(oracle));
+        // 2. OracleAdapter: reuse an existing one if ORACLE_ADDR is set (skips the TWAP warmup so
+        //    the seed swap works immediately), otherwise deploy a fresh one.
+        address oracleAddr = vm.envOr("ORACLE_ADDR", address(0));
+        if (oracleAddr == address(0)) {
+            OracleAdapter oracle = new OracleAdapter(
+                CHAINLINK_GBP_USD,
+                CHAINLINK_SEQUENCER_UPTIME,
+                TWAP_WINDOW,
+                MAX_STALENESS,
+                MAX_STEP_WAD,
+                SEQUENCER_GRACE,
+                COOLDOWN
+            );
+            oracleAddr = address(oracle);
+            console2.log("OracleAdapter deployed at", oracleAddr);
+        } else {
+            require(oracleAddr.code.length > 0, "no code at ORACLE_ADDR");
+            console2.log("OracleAdapter reused at", oracleAddr);
+        }
 
         // 3. Deploy GBPF (HOOK unset).
         GBPF gbpf = new GBPF();
@@ -114,9 +122,7 @@ contract Deploy is Script {
         // 5. Mine a CREATE2 salt for the Hook such that its address encodes the required flags.
         bytes memory hookInitCode = abi.encodePacked(
             type(Hook).creationCode,
-            abi.encode(
-                V4_POOL_MANAGER, address(vault), address(oracle), address(gbpf), USDS_TOKEN, SUSDS_TOKEN, SPARK_PSM3
-            )
+            abi.encode(V4_POOL_MANAGER, address(vault), oracleAddr, address(gbpf), USDS_TOKEN, SUSDS_TOKEN, SPARK_PSM3)
         );
         (bytes32 salt, address predictedHook) =
             HookMiner.find(CREATE2_DEPLOYER, HOOK_FLAGS, hookInitCode, 0, MINING_LIMIT);
@@ -126,7 +132,7 @@ contract Deploy is Script {
 
         // 6. Deploy the Hook via CREATE2 using the mined salt.
         Hook hook = new Hook{salt: salt}(
-            V4_POOL_MANAGER, address(vault), address(oracle), address(gbpf), USDS_TOKEN, SUSDS_TOKEN, SPARK_PSM3
+            V4_POOL_MANAGER, address(vault), oracleAddr, address(gbpf), USDS_TOKEN, SUSDS_TOKEN, SPARK_PSM3
         );
         require(address(hook) == predictedHook, "hook landed at unexpected address");
         require((uint160(address(hook)) & 0x3fff) == HOOK_FLAGS, "hook address does not encode required flags");
@@ -147,10 +153,10 @@ contract Deploy is Script {
 
         vm.stopBroadcast();
 
-        _printOperatorInstructions(address(vault), address(gbpf), address(hook), address(oracle), salt);
+        _printOperatorInstructions(address(vault), address(gbpf), address(hook), oracleAddr, salt);
 
         return Deployment({
-            oracle: address(oracle), gbpf: address(gbpf), vault: address(vault), hook: address(hook), hookSalt: salt
+            oracle: oracleAddr, gbpf: address(gbpf), vault: address(vault), hook: address(hook), hookSalt: salt
         });
     }
 

@@ -34,10 +34,9 @@ import {ForwarderRedeemer} from "../src/periphery/ForwarderRedeemer.sol";
 ///           ForwarderMinter  (owner, poolManager, hook,        gbpf, usds, psm3, usdc, weth, usdcWethPool)
 ///           ForwarderRedeemer(owner, poolManager, hook, vault, gbpf, usds, psm3, usdc, weth, usdcWethPool)
 contract ForwarderDeploy is Script {
-    // Live core (Base 8453, commit 60d3895 — DEPLOYMENT.md).
-    address internal constant GBPF = 0x1817FD23ceF7Da47DF934fdc880d72e653786770;
-    address internal constant HOOK = 0x5613c279E8Db9815DBD0CdFbd10515EAbD350088;
-    address internal constant VAULT = 0xA9a831a348D0Db372cf75dd7C082cFF67A453498;
+    // Core addresses (GBPF, HOOK, VAULT) are read from env at runtime — set them to the freshly
+    // deployed core (GBPF_ADDR, HOOK_ADDR, VAULT_ADDR). No defaults: a missing env var reverts
+    // rather than binding the periphery to a stale core.
     address internal constant V4_POOL_MANAGER = 0x498581fF718922c3f8e6A244956aF099B2652b2b;
     address internal constant USDS = 0x820C137fa70C8691f0e44Dc420a5e53c168921Dc;
 
@@ -50,6 +49,13 @@ contract ForwarderDeploy is Script {
     function run() external returns (address minter, address redeemer) {
         uint256 seedEth = vm.envOr("SEED_ETH_WEI", uint256(0));
         address owner = msg.sender;
+
+        address GBPF = vm.envOr("GBPF_ADDR", address(0));
+        address HOOK = vm.envOr("HOOK_ADDR", address(0));
+        address VAULT = vm.envOr("VAULT_ADDR", address(0));
+        require(GBPF != address(0), "set GBPF_ADDR env to the new GBPF");
+        require(HOOK != address(0), "set HOOK_ADDR env to the new Hook");
+        require(VAULT != address(0), "set VAULT_ADDR env to the new Vault");
 
         _requireCode(GBPF, "GBPF");
         _requireCode(HOOK, "HOOK");

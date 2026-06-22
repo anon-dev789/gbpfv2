@@ -47,10 +47,9 @@ import {BatchRedeemer} from "../src/periphery/BatchRedeemer.sol";
 ///               0xd0b53D9277642d899DF5C87A3966A349A798F224)
 ///           (BatchRedeemer adds the Vault as the 4th arg — see CONSTRUCTOR ARG ORDER below.)
 contract BatchDeploy is Script {
-    // Live core (Base 8453, commit 60d3895 — DEPLOYMENT.md).
-    address internal constant GBPF = 0x1817FD23ceF7Da47DF934fdc880d72e653786770;
-    address internal constant HOOK = 0x5613c279E8Db9815DBD0CdFbd10515EAbD350088;
-    address internal constant VAULT = 0xA9a831a348D0Db372cf75dd7C082cFF67A453498;
+    // Core addresses (GBPF, HOOK, VAULT) are read from env at runtime — set them to the freshly
+    // deployed core (GBPF_ADDR, HOOK_ADDR, VAULT_ADDR). No defaults: a missing env var reverts
+    // rather than binding the periphery to a stale core.
     address internal constant V4_POOL_MANAGER = 0x498581fF718922c3f8e6A244956aF099B2652b2b;
     address internal constant USDS = 0x820C137fa70C8691f0e44Dc420a5e53c168921Dc;
 
@@ -65,8 +64,15 @@ contract BatchDeploy is Script {
         uint256 seedEth = vm.envOr("SEED_ETH_WEI", uint256(0));
         address owner = msg.sender;
 
-        // Preflight: the addresses we hard-wire must actually be contracts (catches a stale
-        // constant or a wrong-chain RPC before we spend gas).
+        address GBPF = vm.envOr("GBPF_ADDR", address(0));
+        address HOOK = vm.envOr("HOOK_ADDR", address(0));
+        address VAULT = vm.envOr("VAULT_ADDR", address(0));
+        require(GBPF != address(0), "set GBPF_ADDR env to the new GBPF");
+        require(HOOK != address(0), "set HOOK_ADDR env to the new Hook");
+        require(VAULT != address(0), "set VAULT_ADDR env to the new Vault");
+
+        // Preflight: the addresses we wire must actually be contracts (catches a wrong address or a
+        // wrong-chain RPC before we spend gas).
         _requireCode(GBPF, "GBPF");
         _requireCode(HOOK, "HOOK");
         _requireCode(VAULT, "VAULT");
