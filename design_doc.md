@@ -95,7 +95,7 @@ inverse — paying redeemers a premium at a shortfall — lets arbitrage drain t
 spiral (`ds = (dS/S)·(s − r) < 0` whenever payout `r` exceeds solvency `s`); that inversion was the
 original bug this sign convention exists to prevent.
 
-**No hard peg, hard solvency.** GBPF does not promise 1 token = £1 at all times. It promises that the protocol is always solvent against its on-chain reserves, with redemption priced honestly against actual collateral.
+**No hard peg, soft solvency.** GBPF does not promise 1 token = £1 at all times. It prices mint/redeem against on-chain reserves and discounts redemption toward backing during a shortfall — but the discount is capped at the 5% one-sided spread, so it is *not* fully solvent-by-construction in deep distress (redemptions below ~95% solvency still draw slightly more than backing). A redeem-at-NAV mechanism would close that gap; see the residual-risk note in `SECURITY.md`.
 
 **Why this curve shape (and not the obvious alternatives):**
 - Piecewise-flat-around-peg creates a kink at the band edge (arbitrageurs target kinks) and a no-restoring-force dead zone inside the band.
@@ -256,7 +256,7 @@ Atomic with deployment:
 
 - **Permissionless:** no admin functions, no KYC, no whitelisting on mint/redeem
 - **Bounded external recipient:** beneficiary multisig has immutable claim on defined revenue share but no operational control
-- **Solvent by construction:** protocol can never owe more than it holds, by mechanism design
+- **Bounded overpayment:** redemption is haircut toward backing during a shortfall, capped at the 5% one-sided spread — not fully solvent-by-construction in deep distress (see `SECURITY.md` residual risks)
 - **Transparent:** solvency ratio publicly computable every block
 - **Self-funding (partially):** 50% of yield plus 100% of curve-spread revenue compound into reserves
 - **MEV-resistant:** layered defences — flat fee, curve spread, TWAP, circuit-breaker, sequencer-uptime feed

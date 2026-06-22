@@ -19,10 +19,15 @@ entirely by the code and by the on-chain state of its external dependencies.
 
 The high-level commitments the protocol makes:
 
-1. **Solvent by construction.** The protocol can never owe more than it holds, at any solvency level,
-   under any mint/redeem sequence.
-2. **Bounded loss for the last redeemer.** Even in deep distress, redemption is priced honestly against
-   reserves; the worst-case spread is capped at `S_MAX = 5%` one-sided.
+1. **Bounded overpayment (not solvent-by-construction).** The redeem haircut is capped at
+   `S_MAX = 5%` one-sided, so at a shortfall the protocol can pay redeemers up to ~5% more than the
+   true per-token backing. Below ~95% solvency redemptions therefore still draw slightly more than
+   backing — a slow drain. This is a bounded, documented residual risk, mitigated by the deviation
+   circuit-breaker (bounds how fast solvency can fall), the mint-side discount (pulls collateral in),
+   and the redeem-side discount (discourages draining). The protocol is *not* solvent-by-construction
+   in deep distress; a redeem-at-NAV mechanism would be required for that (see ROLLOUT notes).
+2. **Bounded, knowable haircut for the last redeemer.** Even in deep distress the one-sided spread is
+   capped at `S_MAX = 5%`, so the worst-case redeemer haircut (and mint premium) is knowable in advance.
 3. **No silent loss of funds.** Beneficiary withdrawals can only flow to the hardcoded multisig.
    Vault funds can only leave via legitimate mint/redeem/beneficiary-withdraw flows.
 4. **Availability under normal conditions.** Mint/redeem succeed whenever oracles are healthy and the
