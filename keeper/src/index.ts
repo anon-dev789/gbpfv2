@@ -92,10 +92,18 @@ async function runKeeper(env: Env, kind: Kind): Promise<void> {
 
   // Resolve the scan window: [cursor, min(head, cursor + MAX_RANGE)].
   const head = await pub.getBlockNumber();
-  const cursorKey = `${kind}:lastBlock`;
+  // Cursor + pending set live in ONE KV value per kind, written at most once per tick. KV puts are
+  // rate-limited (free tier: 1000/day); two puts × two kinds × a 2-min cron used to blow it.
+  const stateKey = `${kind}:state`;
+  const state = JSON.parse((await env.KEEPER_KV.get(stateKey)) || "{}") as {
+    lastBlock?: string;
+    pending?: Address[];
+  };
   const startCfg = BigInt(env.START_BLOCK);
-  const stored = await env.KEEPER_KV.get(cursorKey);
-  let fromBlock = stored ? BigInt(stored) : startCfg;
+  // One-time migration from the old split keys. GETs are not rate-limited like puts, so reading the
+  // legacy cursor on the first combined-state run is free and avoids re-scanning from START_BLOCK.
+  const storedLastBlock = state.lastBlock ?? (await env.KEEPER_KV.get(`${kind}:lastBlock`)) ?? undefined;
+  let fromBlock = storedLastBlock ? BigInt(storedLastBlock) : startCfg;
   if (fromBlock < startCfg) fromBlock = startCfg;
   const maxRange = BigInt(env.MAX_RANGE);
   const toBlock = head < fromBlock + maxRange ? head : fromBlock + maxRange;
@@ -132,9 +140,8 @@ async function runKeeper(env: Env, kind: Kind): Promise<void> {
     if (forwarder.toLowerCase() === to.toLowerCase()) discovered.add(from);
   }
 
-  // 2. Merge with previously-seen-but-unswept candidates.
-  const pendingKey = `${kind}:pending`;
-  const prior: Address[] = JSON.parse((await env.KEEPER_KV.get(pendingKey)) || "[]");
+  // 2. Merge with previously-seen-but-unswept candidates (from the combined state; legacy fallback).
+  const prior: Address[] = state.pending ?? JSON.parse((await env.KEEPER_KV.get(`${kind}:pending`)) || "[]");
   const candidates = Array.from(new Set<Address>([...prior, ...discovered]));
 
   // 3. Which candidates' forwarders actually hold a balance right now?
@@ -180,11 +187,16 @@ async function runKeeper(env: Env, kind: Kind): Promise<void> {
     }
   }
 
-  // 5. Persist cursor + remaining pending set. If we executed, those forwarders are now drained,
-  //    so only carry forward funded users we did NOT sweep this tick.
-  await env.KEEPER_KV.put(cursorKey, toBlock.toString());
+  // 5. Persist cursor + remaining pending in ONE put. If we executed, those forwarders are now
+  //    drained, so only carry forward funded users we did NOT sweep this tick. Skip the put entirely
+  //    when nothing changed, to conserve the KV daily put quota.
   const stillPending = executed ? [] : funded.map((f) => f.user);
-  await env.KEEPER_KV.put(pendingKey, JSON.stringify(stillPending));
+  const nextLastBlock = toBlock.toString();
+  const changed =
+    nextLastBlock !== storedLastBlock || JSON.stringify(stillPending) !== JSON.stringify(prior);
+  if (changed) {
+    await env.KEEPER_KV.put(stateKey, JSON.stringify({ lastBlock: nextLastBlock, pending: stillPending }));
+  }
 }
 
 // ---- helpers ----
