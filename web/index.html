@@ -293,6 +293,15 @@
   <h1 id="page-title">Swap USDS for GBPF</h1>
   <p class="subtitle" id="page-subtitle">Enter your wallet. Send USDS to your personal deposit address. GBPF arrives in your wallet within ~5 minutes.</p>
 
+  <p style="font-size:14px; color:var(--text2); margin-bottom:1rem;">
+    This service is brought to you by <strong style="color:var(--text);">Eromango</strong>.
+  </p>
+
+  <div style="background:var(--amber-bg); color:var(--amber-text); border-radius:var(--radius); padding:10px 12px; font-size:13px; line-height:1.5; margin-bottom:1.5rem;">
+    <strong>Everything runs on the Base network (chain 8453).</strong> Send USDS or GBPF only on Base
+    to your deposit address — funds sent on Ethereum mainnet or any other chain cannot be recovered.
+  </div>
+
   <div class="seg" id="dir-toggle">
     <button class="seg-btn active" data-dir="mint" onclick="setDirection('mint')">Buy GBPF<small>USDS → GBPF</small></button>
     <button class="seg-btn" data-dir="redeem" onclick="setDirection('redeem')">Sell GBPF<small>GBPF → USDS</small></button>
@@ -429,7 +438,29 @@
     </div>
   </div>
 
-  <footer>GBPF — GBP-pegged stablecoin on Base &middot; <a href="https://scrubbed.finance" style="color:inherit;">scrubbed scrubbed Ltd</a></footer>
+  <div class="card">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+      <span style="font-size:14px; font-weight:500;">Contracts — verify on Basescan</span>
+      <span class="pill pill-teal" style="margin-bottom:0;">Base · chain 8453</span>
+    </div>
+    <p style="font-size:13px; color:var(--text2); margin-bottom:12px; line-height:1.6;">
+      Everything is on the <strong>Base network</strong>. Don't trust — verify: check these on Basescan before you send anything.
+    </p>
+
+    <div class="label">GBPF token</div>
+    <div class="copy-row" style="margin-bottom:12px;">
+      <div class="addr-box">0x836f4b0e5774eDb800F4e0741E825Ee6F8cD6bf6</div>
+      <a class="ghost" href="https://basescan.org/token/0x836f4b0e5774eDb800F4e0741E825Ee6F8cD6bf6" target="_blank" rel="noopener">Basescan &rarr;</a>
+    </div>
+
+    <div class="label">Hook (the swap contract)</div>
+    <div class="copy-row">
+      <div class="addr-box">0xCaa01Ba96895936257af3Cd27E08b7578039C088</div>
+      <a class="ghost" href="https://basescan.org/address/0xCaa01Ba96895936257af3Cd27E08b7578039C088" target="_blank" rel="noopener">Basescan &rarr;</a>
+    </div>
+  </div>
+
+  <footer>GBPF — GBP-pegged stablecoin on Base &middot; brought to you by <strong>Eromango</strong></footer>
 </div>
 
 <script>
