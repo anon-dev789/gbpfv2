@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>What is GBPF? — GBP-pegged stablecoin on Base</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #ffffff;
+    --bg2: #f5f5f3;
+    --bg3: #eeede8;
+    --text: #1a1a18;
+    --text2: #5f5e5a;
+    --text3: #888780;
+    --border: rgba(0,0,0,0.12);
+    --border2: rgba(0,0,0,0.22);
+    --teal: #0F6E56;
+    --teal-bg: #E1F5EE;
+    --teal-text: #085041;
+    --amber: #854F0B;
+    --amber-bg: #FAEEDA;
+    --amber-text: #633806;
+    --danger: #A32D2D;
+    --danger-bg: #FCEBEB;
+    --danger-text: #791F1F;
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a18;
+      --bg2: #242422;
+      --bg3: #2c2c2a;
+      --text: #f0efe8;
+      --text2: #b4b2a9;
+      --text3: #888780;
+      --border: rgba(255,255,255,0.12);
+      --border2: rgba(255,255,255,0.22);
+      --teal-bg: #085041;
+      --teal-text: #9FE1CB;
+      --amber-bg: #633806;
+      --amber-text: #FAC775;
+      --danger-bg: #791F1F;
+      --danger-text: #F7C1C1;
+    }
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg3);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 2rem 1rem;
+    line-height: 1.6;
+  }
+
+  .page { max-width: 620px; margin: 0 auto; }
+
+  .wordmark {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    color: var(--text3);
+    text-transform: uppercase;
+    margin-bottom: 1.5rem;
+  }
+
+  h1 { font-size: 28px; font-weight: 500; margin-bottom: 6px; color: var(--text); }
+  .subtitle { font-size: 15px; color: var(--text2); margin-bottom: 1.75rem; }
+
+  .back-link {
+    display: inline-block;
+    font-size: 13px;
+    color: var(--text2);
+    text-decoration: none;
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    margin-bottom: 1.5rem;
+    transition: background 0.15s;
+  }
+  .back-link:hover { background: var(--bg2); }
+
+  .card {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .card h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 0.75rem;
+  }
+
+  .card p { font-size: 15px; color: var(--text2); margin-bottom: 0.85rem; }
+  .card p:last-child { margin-bottom: 0; }
+  .card strong { color: var(--text); font-weight: 600; }
+
+  .card ul { list-style: none; margin: 0.5rem 0 0.85rem; }
+  .card ul li {
+    position: relative;
+    font-size: 15px;
+    color: var(--text2);
+    padding: 4px 0 4px 1.25rem;
+  }
+  .card ul li::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 0.95rem;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--teal);
+  }
+
+  code {
+    font-family: 'SF Mono', 'Fira Mono', monospace;
+    font-size: 13px;
+    background: var(--bg2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--text);
+  }
+
+  .label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 4px;
+    margin-bottom: 10px;
+  }
+  .pill-teal { background: var(--teal-bg); color: var(--teal-text); }
+  .pill-amber { background: var(--amber-bg); color: var(--amber-text); }
+
+  .addr-box {
+    background: var(--bg2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-family: 'SF Mono', 'Fira Mono', monospace;
+    font-size: 12px;
+    word-break: break-all;
+    color: var(--text);
+    line-height: 1.5;
+  }
+  .copy-row { display: flex; gap: 8px; margin-top: 8px; align-items: center; margin-bottom: 14px; }
+  .copy-row:last-child { margin-bottom: 0; }
+  .copy-row .addr-box { flex: 1; }
+
+  a.ghost {
+    padding: 6px 12px;
+    font-size: 13px;
+    background: transparent;
+    color: var(--text2);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background 0.15s;
+  }
+  a.ghost:hover { background: var(--bg2); }
+
+  .callout {
+    background: var(--amber-bg);
+    color: var(--amber-text);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    font-size: 14px;
+    line-height: 1.55;
+    margin: 0.5rem 0;
+  }
+  .callout strong { color: inherit; }
+
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0.75rem 0; }
+  .stat { background: var(--bg2); border-radius: var(--radius); padding: 12px 14px; }
+  .stat-head { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+  .stat-body { font-size: 13px; color: var(--text2); }
+
+  footer {
+    margin-top: 2rem;
+    font-size: 12px;
+    color: var(--text3);
+    text-align: center;
+  }
+  footer a { color: inherit; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <p class="wordmark">GBPF</p>
+  <a class="back-link" href="./">&larr; Back to swap</a>
+  <h1>What is GBPF?</h1>
+  <p class="subtitle">GBPF is a GBP-pegged stablecoin on the Base network, fully backed by US-dollar reserves and priced honestly against them.</p>
+
+  <div class="card">
+    <h2>The short version</h2>
+    <p>
+      <strong>GBPF tracks the British pound.</strong> One GBPF is designed to be worth roughly one
+      pound's worth of value. You buy it by sending <strong>USDS</strong> (a US-dollar stablecoin) and
+      you can sell it back for USDS at any time.
+    </p>
+    <p>
+      Behind every GBPF in circulation sits real US-dollar collateral, held in an on-chain vault and
+      earning yield. GBPF is priced against that collateral using a live <strong>GBP/USD</strong>
+      exchange-rate oracle — so its dollar price moves with the pound, exactly as it should.
+    </p>
+    <div class="callout">
+      <strong>No hard peg — hard solvency.</strong> GBPF doesn't promise a fixed exchange rate it
+      can't keep. Instead it promises that the collateral backing it is always accounted for honestly,
+      and the price you get always reflects what's actually in the vault.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>How it's backed</h2>
+    <p>
+      Every GBPF is backed by <strong>USDS / sUSDS</strong> — Sky's (formerly MakerDAO) US-dollar
+      stablecoin and its yield-bearing version — held in an on-chain <strong>Vault</strong> contract
+      on Base.
+    </p>
+    <ul>
+      <li>When you buy GBPF, your USDS goes into the Vault and new GBPF is minted to you.</li>
+      <li>The Vault holds the reserves as <strong>sUSDS</strong>, so the collateral earns the Sky Savings Rate while it sits there.</li>
+      <li>When you sell GBPF, it is burned and the matching USDS is paid out of the Vault.</li>
+    </ul>
+    <p>
+      The backing is fully on-chain and verifiable. Anyone can read the Vault's reserves and GBPF's
+      total supply directly from the contracts (linked below) — you don't have to take anyone's word
+      for it.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>How it's stabilised against USDS</h2>
+    <p>
+      GBPF is a <strong>pound</strong>; USDS is a <strong>dollar</strong>. So GBPF is <em>not</em>
+      meant to trade one-for-one with USDS — its USDS price floats with the real
+      <strong>GBP/USD</strong> rate. If a pound is worth $1.27, then one GBPF is worth about 1.27 USDS.
+    </p>
+    <p>
+      That rate comes from a <strong>Chainlink GBP/USD oracle</strong>, read as a time-weighted
+      average (TWAP) to smooth out short-term spikes and make price manipulation impractical. Every
+      buy and sell is settled at the oracle rate against the Vault — not against a thin liquidity pool
+      that can be pushed around.
+    </p>
+    <p>
+      On top of the oracle rate there's a <strong>solvency spread</strong> that keeps the system
+      honest when the dollar reserves don't quite cover the pound liabilities (which can happen purely
+      because GBP/USD moved):
+    </p>
+    <ul>
+      <li><strong>At or above 100% backing:</strong> no spread — you trade at the oracle rate, plus the standard fees.</li>
+      <li><strong>Below 100% backing:</strong> GBPF is priced at a small discount. Buying gets <em>cheaper</em> (you're rewarded for adding collateral) and selling takes a <em>haircut</em> (redeemers share the shortfall fairly instead of first-out-gets-everything).</li>
+    </ul>
+    <p>
+      The discount grows smoothly as backing falls and is capped at <strong>5%</strong>. This is what
+      lets GBPF stay solvent and fairly priced through FX swings, without ever pretending the reserves
+      are bigger than they are.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>What it costs</h2>
+    <p>Two fees apply on top of the oracle rate:</p>
+    <ul>
+      <li>A <strong>20bp (0.20%) swap fee</strong> charged inside the swap itself.</li>
+      <li>A small flat <strong>service fee</strong> (0.05 USDS + a 0.10 USDS batch fee that's split across everyone swapping at the same time) to cover keeper gas.</li>
+    </ul>
+    <p>
+      Changed your mind before your swap is processed? Your funds sit untouched at your deposit
+      address until the batch runs, and you can pull them back in full with <code>refund()</code> — no
+      fee deducted.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Honest risks</h2>
+    <p>GBPF is designed to be transparent about how it can lose value. The main risks:</p>
+    <div class="stat-grid">
+      <div class="stat">
+        <div class="stat-head">FX / solvency</div>
+        <div class="stat-body">Reserves are in USD but liabilities are in GBP. A rising pound lowers backing below 100%, which triggers the redemption haircut.</div>
+      </div>
+      <div class="stat">
+        <div class="stat-head">Collateral</div>
+        <div class="stat-body">Backing depends on USDS / sUSDS holding their own dollar peg and on Sky's solvency.</div>
+      </div>
+      <div class="stat">
+        <div class="stat-head">Oracle</div>
+        <div class="stat-body">Pricing relies on the Chainlink GBP/USD feed. If it reports unhealthy, swaps pause until it recovers.</div>
+      </div>
+      <div class="stat">
+        <div class="stat-head">Smart contract</div>
+        <div class="stat-body">As with any on-chain protocol, the code itself carries risk. Verify the contracts before you send funds.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+      <span style="font-size:18px; font-weight:600;">Contracts — verify on Basescan</span>
+    </div>
+    <span class="pill pill-teal">Base · chain 8453</span>
+    <p style="font-size:14px; color:var(--text2); margin-bottom:14px;">
+      Everything runs on the <strong>Base network</strong>. Don't trust — verify: read the reserves,
+      the supply and the code yourself before you send anything.
+    </p>
+
+    <div class="label">GBPF token</div>
+    <div class="copy-row">
+      <div class="addr-box">0x836f4b0e5774eDb800F4e0741E825Ee6F8cD6bf6</div>
+      <a class="ghost" href="https://basescan.org/token/0x836f4b0e5774eDb800F4e0741E825Ee6F8cD6bf6" target="_blank" rel="noopener">Basescan &rarr;</a>
+    </div>
+
+    <div class="label">Hook (the swap / pricing contract)</div>
+    <div class="copy-row">
+      <div class="addr-box">0xCaa01Ba96895936257af3Cd27E08b7578039C088</div>
+      <a class="ghost" href="https://basescan.org/address/0xCaa01Ba96895936257af3Cd27E08b7578039C088" target="_blank" rel="noopener">Basescan &rarr;</a>
+    </div>
+
+    <div class="label">Vault (the collateral reserves)</div>
+    <div class="copy-row">
+      <div class="addr-box">0x5de65a46EE6Cb284Af9cAeF85FE693752a23F609</div>
+      <a class="ghost" href="https://basescan.org/address/0x5de65a46EE6Cb284Af9cAeF85FE693752a23F609" target="_blank" rel="noopener">Basescan &rarr;</a>
+    </div>
+  </div>
+
+  <div style="text-align:center; margin: 1.5rem 0;">
+    <a class="back-link" href="./" style="margin-bottom:0;">&larr; Back to swap</a>
+  </div>
+
+  <footer>GBPF — GBP-pegged stablecoin on Base &middot; brought to you by <strong>Eromango</strong> &middot; <a href="mailto:eromango.gumming802@passmail.com">eromango.gumming802@passmail.com</a></footer>
+</div>
+</body>
+</html>
