@@ -293,6 +293,10 @@
   <h1 id="page-title">Swap USDS for GBPF</h1>
   <p class="subtitle" id="page-subtitle">Enter your wallet. Send USDS to your personal deposit address. GBPF arrives in your wallet within ~5 minutes.</p>
 
+  <p style="font-size:13px; color:var(--text2); margin:0 0 1.25rem; line-height:1.5;">
+    &#9201;&#65039; Batches run about every 4 minutes — next run <strong class="next-batch" style="color:var(--text);">soon</strong>.
+  </p>
+
   <p style="font-size:14px; color:var(--text2); margin-bottom:1rem;">
     This service is brought to you by <strong style="color:var(--text);">Eromango</strong> — questions?
     Email <a href="mailto:erromango.amigo907@passmail.com" style="color:var(--text); text-decoration:underline;">erromango.amigo907@passmail.com</a>.
@@ -419,7 +423,7 @@
       <span style="font-size:14px; font-weight:500;">Changed your mind?</span>
       <span class="pill pill-teal" style="margin-bottom:0;">Full refund available</span>
     </div>
-    <p style="font-size:14px; color:var(--text2); margin-bottom:12px; line-height:1.6;">Your <span class="tok-send">USDS</span> sits untouched at your deposit address until the batch runs. If you want it back beforehand, call <code style="font-size:12px; background:var(--bg2); padding:2px 5px; border-radius:4px;">refund()</code> on the <span class="rf-contract-name">ForwarderMinter</span> contract — it returns the full amount with no fee deducted.</p>
+    <p style="font-size:14px; color:var(--text2); margin-bottom:12px; line-height:1.6;">Your <span class="tok-send">USDS</span> sits untouched at your deposit address until the next batch runs — batches run about every 4 minutes (next run <span class="next-batch">soon</span>). If you want it back beforehand, call <code style="font-size:12px; background:var(--bg2); padding:2px 5px; border-radius:4px;">refund()</code> on the <span class="rf-contract-name">ForwarderMinter</span> contract — it returns the full amount with no fee deducted.</p>
 
     <div class="label">How to get a refund</div>
     <ul class="step-list" style="margin-bottom:12px;">
@@ -473,11 +477,14 @@ const ORACLE = '0x9c66F3F8a102d6Bf3EeaEAAe5d9ECAe88985eB2F';
 const VAULT  = '0x5de65a46EE6Cb284Af9cAeF85FE693752a23F609';
 const GBPF   = '0x836f4b0e5774eDb800F4e0741E825Ee6F8cD6bf6';
 const USDS   = '0x820C137fa70C8691f0e44Dc420a5e53c168921Dc';
+// GBP/USD Chainlink feed wired into the OracleAdapter (immutable). Read only to show data age.
+const CHAINLINK_FEED = '0xccea6576904c118037695eb71195a5425e69fa15';
 
 const SEL_UPDATE           = '0xa2e62045';
 const SEL_PREVIEW_SOLVENCY = '0xf392169c';
 const SEL_TOTAL_SUPPLY     = '0x18160ddd';
 const SEL_BALANCE_OF       = '0x70a08231';
+const SEL_LATEST_ROUND     = '0xfeaf968c'; // Chainlink AggregatorV3.latestRoundData()
 
 const S_MAX    = 0.05;
 const D_50     = 0.05;
@@ -497,6 +504,26 @@ const MAX_SOL = WAD * BigInt(10);
 // clears it. Same numeric threshold applies to both directions, denominated in the send token.
 const MIN_BATCH_WAD = BigInt('1000000000000000000');
 function minBatchStr() { return (+ethers.formatUnits(MIN_BATCH_WAD, 18)).toString(); }
+
+// The forwarder keeper (Cloudflare Worker) sweeps on a wall-clock cron every 4 minutes
+// (keeper/wrangler.toml: crons = ["*/4 * * * *"]). It's best-effort and only fires once the pending
+// total clears the batch minimum, so this is an estimate of the next scheduled sweep, not a promise.
+const BATCH_CRON_MIN = 4;
+function nextBatchSecs() {
+  const now = new Date();
+  const into = (now.getMinutes() % BATCH_CRON_MIN) * 60 + now.getSeconds();
+  return (BATCH_CRON_MIN * 60) - into; // 1..240
+}
+function nextBatchStr() {
+  const s = nextBatchSecs();
+  if (s <= 20) return 'any moment now';
+  const m = Math.floor(s / 60), ss = s % 60;
+  return '≈ ' + m + ':' + String(ss).padStart(2, '0');
+}
+function tickNextBatch() {
+  const txt = nextBatchStr();
+  document.querySelectorAll('.next-batch').forEach(e => e.textContent = txt);
+}
 
 // Both forwarder factories deploy the same Forwarder bytecode, so they share an init-code hash;
 // only the deployer (factory) differs, which is what makes the deposit address direction-specific.
@@ -553,6 +580,17 @@ function words(hex) {
 
 function mulDiv(a, b, d) { return (a * b) / d; }
 
+// Relative age of the oracle's last price update, in plain English.
+function formatAge(updatedAtSec) {
+  if (!updatedAtSec || !isFinite(updatedAtSec)) return 'recently';
+  const secs = Math.floor(Date.now() / 1000) - updatedAtSec;
+  if (secs < 60) return 'just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + ' min ago';
+  const hrs = Math.floor(mins / 60);
+  return hrs + 'h ' + (mins % 60) + 'm ago';
+}
+
 function computeSolvency(sUsds, pendingBen, ssrRate, usdsClaim, twap, supply) {
   const principal = sUsds > pendingBen ? sUsds - pendingBen : 0n;
   const totalUsds = mulDiv(principal, ssrRate, RAY) + usdsClaim;
@@ -578,10 +616,11 @@ async function fetchRate() {
   statusEl.textContent = 'Fetching…';
 
   try {
-    const [oracleRaw, vaultRaw, supplyRaw] = await Promise.all([
+    const [oracleRaw, vaultRaw, supplyRaw, feedRaw] = await Promise.all([
       ethCall(ORACLE, SEL_UPDATE),
       ethCall(VAULT,  SEL_PREVIEW_SOLVENCY),
-      ethCall(GBPF,   SEL_TOTAL_SUPPLY)
+      ethCall(GBPF,   SEL_TOTAL_SUPPLY),
+      ethCall(CHAINLINK_FEED, SEL_LATEST_ROUND)
     ]);
 
     const ow = words(oracleRaw);
@@ -592,6 +631,9 @@ async function fetchRate() {
     const sUsds = vw[0], pendingBen = vw[1], ssrRate = vw[2], usdsClaim = vw[3];
 
     const supply = words(supplyRaw)[0];
+
+    // latestRoundData() → (roundId, answer, startedAt, updatedAt, answeredInRound); updatedAt is word 3.
+    const updatedAt = Number(words(feedRaw)[3]);
 
     const solvencyWad = supply === 0n ? WAD : computeSolvency(sUsds, pendingBen, ssrRate, usdsClaim, twapWad, supply);
     const solvency    = Number(solvencyWad) / Number(WAD);
@@ -626,7 +668,7 @@ async function fetchRate() {
 
     if (healthy) {
       dotEl.className = 'dot dot-green';
-      statusEl.textContent = 'Oracle healthy · updated just now';
+      statusEl.textContent = 'Oracle healthy · price updated ' + formatAge(updatedAt);
     } else {
       dotEl.className = 'dot dot-red';
       statusEl.textContent = 'Oracle unhealthy — swaps paused';
@@ -849,6 +891,8 @@ document.getElementById('wallet-input').addEventListener('keydown', e => {
 updateChrome();
 fetchRate();
 setInterval(fetchRate, 60000);
+tickNextBatch();
+setInterval(tickNextBatch, 1000);
 </script>
 </body>
 </html>
